@@ -3,8 +3,9 @@ function moundResults = analyzeMoundShape(m1, varargin)
 %  analyzeMoundShape  -  Module 3: Per-mound shape and roughness analysis
 %
 %  Preferred reporting uses Method B (nearest-neighbour-radius circle) for
-%  valley-dependent quantities and watershed-restricted raw half-max
-%  footprints for per-mound shape geometry.
+%  valley-dependent quantities, watershed-contained peaks for direct mound
+%  height, and watershed-restricted raw half-max footprints for per-mound
+%  shape geometry.
 %
 %  USAGE:
 %    moundResults = analyzeMoundShape(m1)
@@ -18,8 +19,11 @@ function moundResults = analyzeMoundShape(m1, varargin)
 %    Rp_global, Rv_global, Rz_global
 %    Rz_per_mound             - preferred per-mound roughness (Method B)
 %    preferred_Rz_per_mound   - same preferred per-mound roughness
-%    footprint_um2            - preferred raw half-max footprint area
-%    equiv_diam_um            - preferred raw equivalent diameter
+%    mound_base_position_um   - preferred mound-base position from Method C
+%    mound_height_um          - preferred mound height from watershed peak + Method C base position
+%    footprint_um2            - preferred watershed-restricted raw half-max footprint area
+%    equiv_diam_um            - preferred watershed-restricted raw equivalent diameter
+%    preferred_aspect_ratio   - preferred height-to-diameter aspect ratio
 %    feret_max_um, feret_min_um, feret_aspect_ratio, feret_orientation_deg
 %    perimeter_um, circularity, solidity, convexity, convex_area_ratio,
 %    extent, major_axis_um, minor_axis_um
@@ -48,7 +52,7 @@ xy           = m1.xy_um_per_px;
 nn_mean_px   = m1.nn_mean_px;
 I_rgb        = repmat(m1.I_raw, [1 1 3]);
 [imgH, imgW] = size(Z_raw);
-METHOD_C_BAND_RADIUS_PX = 3;
+METHOD_C_BASE_BAND_WIDTH_PX = 2;
 
 smooth_sigma = 10;
 Z_smooth     = imgaussfilt(Z_raw, smooth_sigma);
@@ -84,6 +88,10 @@ bbox_r = ceil(max(D_nn) * 1.10) + 4;
 
 peak_z_um            = nan(n_total, 1);
 Rp_per_mound         = nan(n_total, 1);
+watershed_peak_z_um  = nan(n_total, 1);
+watershed_peak_rowcol_px = nan(n_total, 2);
+watershed_peak_Rp_um = nan(n_total, 1);
+Rp_vs_watershed_peak_diff_um = nan(n_total, 1);
 
 valley_z_nn_um       = nan(n_total, 1);
 mound_height_nn_um   = nan(n_total, 1);
@@ -94,27 +102,13 @@ valid_flag_nn        = false(n_total, 1);
 skip_reason_nn       = repmat({''}, n_total, 1);
 
 valley_z_c_um        = nan(n_total, 1);
+mound_base_position_um = nan(n_total, 1);
 mound_height_c_um    = nan(n_total, 1);
 Rv_c_per_mound       = nan(n_total, 1);
 Rz_c_per_mound       = nan(n_total, 1);
 valid_flag_c         = false(n_total, 1);
 skip_reason_c        = repmat({''}, n_total, 1);
 
-footprint_um2         = nan(n_total, 1);
-equiv_diam_um         = nan(n_total, 1);
-aspect_ratio          = nan(n_total, 1);
-perimeter_um          = nan(n_total, 1);
-circularity           = nan(n_total, 1);
-solidity              = nan(n_total, 1);
-convexity             = nan(n_total, 1);
-convex_area_ratio     = nan(n_total, 1);
-extent                = nan(n_total, 1);
-major_axis_um         = nan(n_total, 1);
-minor_axis_um         = nan(n_total, 1);
-feret_max_um          = nan(n_total, 1);
-feret_min_um          = nan(n_total, 1);
-feret_aspect_ratio    = nan(n_total, 1);
-feret_orientation_deg = nan(n_total, 1);
 footprint_ws_um2         = nan(n_total, 1);
 equiv_diam_ws_um         = nan(n_total, 1);
 aspect_ratio_ws          = nan(n_total, 1);
@@ -133,11 +127,13 @@ feret_orientation_ws_deg = nan(n_total, 1);
 valid_flag_ws            = false(n_total, 1);
 
 circle_mask_store    = cell(n_total, 1);
-boundary_band_store  = cell(n_total, 1);
+base_band_store      = cell(n_total, 1);
 footprint_mask_store = cell(n_total, 1);
 crop_boxes           = nan(n_total, 4);
 valley_px_b          = nan(n_total, 2);
 boundary_band_boxes  = nan(n_total, 4);
+base_band_label_img  = zeros(imgH, imgW);
+watershed_border_mask_img = false(imgH, imgW);
 
 fprintf('  Computing per-mound geometry (%d mounds)...\n', n_total);
 
@@ -200,25 +196,32 @@ for k = 1:n_total
         skip_reason_c{k} = 'empty watershed region';
         continue;
     end
-    r1_c = min(rows_k); r2_c = max(rows_k);
-    c1_c = min(cols_k); c2_c = max(cols_k);
+    r1_c = max(1, min(rows_k) - 1); r2_c = min(imgH, max(rows_k) + 1);
+    c1_c = max(1, min(cols_k) - 1); c2_c = min(imgW, max(cols_k) + 1);
     boundary_band_boxes(k, :) = [r1_c r2_c c1_c c2_c];
-    region_c = (watershed_L(r1_c:r2_c, c1_c:c2_c) == k);
-    boundary_c = bwperim(region_c, 4);
-    boundary_band = imdilate(boundary_c, strel('disk', METHOD_C_BAND_RADIUS_PX));
-    boundary_band_store{k} = boundary_band;
-    if sum(boundary_band(:)) < 5
-        skip_reason_c{k} = sprintf('too few boundary-band pixels (%d)', sum(boundary_band(:)));
+    watershed_loc_c = watershed_L(r1_c:r2_c, c1_c:c2_c);
+    region_c = (watershed_loc_c == k);
+    boundary_c = getRegionWatershedBorderMask(watershed_loc_c, k);
+    watershed_border_mask_img(r1_c:r2_c, c1_c:c2_c) = watershed_border_mask_img(r1_c:r2_c, c1_c:c2_c) | boundary_c;
+    centroid_loc_xy = [cx - c1_c + 1, cy - r1_c + 1];
+    [base_band_mask, base_samples_um] = buildMethodCBaseBand(region_c, boundary_c, Z_raw(r1_c:r2_c, c1_c:c2_c), centroid_loc_xy);
+    base_band_store{k} = base_band_mask;
+    [watershed_peak_z_um(k), watershed_peak_rowcol_px(k, :)] = findRegionPeakPixel(region_c, Z_raw(r1_c:r2_c, c1_c:c2_c), r1_c, c1_c);
+    watershed_peak_Rp_um(k) = watershed_peak_z_um(k) - refPlane_um;
+    Rp_vs_watershed_peak_diff_um(k) = Rp_per_mound(k) - watershed_peak_Rp_um(k);
+    if numel(base_samples_um) < 5
+        skip_reason_c{k} = sprintf('too few base-band samples (%d)', numel(base_samples_um));
     else
-        Z_c_raw = Z_raw(r1_c:r2_c, c1_c:c2_c);
-        valley_z_c_um(k) = mean(Z_c_raw(boundary_band), 'omitnan');
-        mound_height_c_um(k) = peak_z_um(k) - valley_z_c_um(k);
+        valley_z_c_um(k) = mean(base_samples_um, 'omitnan');
+        mound_base_position_um(k) = refPlane_um - valley_z_c_um(k);
+        mound_height_c_um(k) = watershed_peak_Rp_um(k) + mound_base_position_um(k);
         if mound_height_c_um(k) > 0 && isfinite(valley_z_c_um(k))
-            Rv_c_per_mound(k) = refPlane_um - valley_z_c_um(k);
-            Rz_c_per_mound(k) = Rp_per_mound(k) + Rv_c_per_mound(k);
+            Rv_c_per_mound(k) = mound_base_position_um(k);
+            Rz_c_per_mound(k) = watershed_peak_Rp_um(k) + Rv_c_per_mound(k);
             valid_flag_c(k) = true;
+            base_band_label_img(r1_c:r2_c, c1_c:c2_c) = max(base_band_label_img(r1_c:r2_c, c1_c:c2_c), double(base_band_mask) * k);
         else
-            skip_reason_c{k} = 'Method C boundary mean not below peak';
+            skip_reason_c{k} = 'Method C base estimate not below peak';
         end
     end
 
@@ -231,38 +234,23 @@ for k = 1:n_total
     end
 
     footprint_mask_store{k} = component_mask;
-    stats = regionprops(component_mask, 'Area', 'Perimeter', 'Solidity', ...
+    stats_ws = regionprops(component_mask, 'Area', 'Perimeter', 'Solidity', ...
         'Extent', 'MajorAxisLength', 'MinorAxisLength', 'ConvexArea');
-    fp = stats(1);
-    [feret_max_um(k), feret_min_um(k), feret_orientation_deg(k), ...
-        feret_aspect_ratio(k), convex_perimeter_um] = computeFeretMetrics(component_mask, xy);
+    fp_ws = stats_ws(1);
+    [feret_max_ws_um(k), feret_min_ws_um(k), feret_orientation_ws_deg(k), ...
+        feret_aspect_ratio_ws(k), convex_perimeter_ws_um] = computeFeretMetrics(component_mask, xy);
 
-    footprint_um2(k)      = fp.Area * xy^2;
-    equiv_diam_um(k)      = 2 * sqrt(footprint_um2(k) / pi);
-    aspect_ratio(k)       = mound_height_nn_um(k) / max(equiv_diam_um(k), eps);
-    perimeter_um(k)       = fp.Perimeter * xy;
-    circularity(k)        = 4 * pi * fp.Area / max(fp.Perimeter^2, eps);
-    solidity(k)           = fp.Solidity;
-    convex_area_ratio(k)  = fp.Area / max(fp.ConvexArea, eps);
-    extent(k)             = fp.Extent;
-    major_axis_um(k)      = fp.MajorAxisLength * xy;
-    minor_axis_um(k)      = fp.MinorAxisLength * xy;
-    convexity(k)          = convex_perimeter_um / max(perimeter_um(k), eps);
-    footprint_ws_um2(k)      = footprint_um2(k);
-    equiv_diam_ws_um(k)      = equiv_diam_um(k);
-    aspect_ratio_ws(k)       = aspect_ratio(k);
-    perimeter_ws_um(k)       = perimeter_um(k);
-    circularity_ws(k)        = circularity(k);
-    solidity_ws(k)           = solidity(k);
-    convexity_ws(k)          = convexity(k);
-    convex_area_ratio_ws(k)  = convex_area_ratio(k);
-    extent_ws(k)             = extent(k);
-    major_axis_ws_um(k)      = major_axis_um(k);
-    minor_axis_ws_um(k)      = minor_axis_um(k);
-    feret_max_ws_um(k)       = feret_max_um(k);
-    feret_min_ws_um(k)       = feret_min_um(k);
-    feret_aspect_ratio_ws(k) = feret_aspect_ratio(k);
-    feret_orientation_ws_deg(k) = feret_orientation_deg(k);
+    footprint_ws_um2(k)      = fp_ws.Area * xy^2;
+    equiv_diam_ws_um(k)      = 2 * sqrt(footprint_ws_um2(k) / pi);
+    aspect_ratio_ws(k)       = mound_height_c_um(k) / max(equiv_diam_ws_um(k), eps);
+    perimeter_ws_um(k)       = fp_ws.Perimeter * xy;
+    circularity_ws(k)        = 4 * pi * fp_ws.Area / max(fp_ws.Perimeter^2, eps);
+    solidity_ws(k)           = fp_ws.Solidity;
+    convex_area_ratio_ws(k)  = fp_ws.Area / max(fp_ws.ConvexArea, eps);
+    extent_ws(k)             = fp_ws.Extent;
+    major_axis_ws_um(k)      = fp_ws.MajorAxisLength * xy;
+    minor_axis_ws_um(k)      = fp_ws.MinorAxisLength * xy;
+    convexity_ws(k)          = convex_perimeter_ws_um / max(perimeter_ws_um(k), eps);
     valid_flag_ws(k)         = true;
 end
 n_valid_nn = sum(valid_flag_nn);
@@ -276,7 +264,7 @@ if sum(preferred_valid_flag) < 3
 end
 preferred_peak_v     = peak_z_um(preferred_valid_flag);
 preferred_valley_v   = valley_z_nn_um(preferred_valid_flag);
-preferred_height_v   = mound_height_nn_um(preferred_valid_flag);
+preferred_height_b_v = mound_height_nn_um(preferred_valid_flag);
 preferred_rp_v       = Rp_per_mound(preferred_valid_flag);
 preferred_rv_v       = Rv_nn_per_mound(preferred_valid_flag);
 preferred_rz_v       = Rz_b_per_mound(preferred_valid_flag);
@@ -284,7 +272,6 @@ preferred_cx_v       = centroids(preferred_valid_flag, 1);
 preferred_cy_v       = centroids(preferred_valid_flag, 2);
 preferred_fp_v       = footprint_ws_um2(preferred_valid_flag);
 preferred_diam_v     = equiv_diam_ws_um(preferred_valid_flag);
-preferred_ar_v       = aspect_ratio_ws(preferred_valid_flag);
 preferred_perim_v    = perimeter_ws_um(preferred_valid_flag);
 preferred_circ_v     = circularity_ws(preferred_valid_flag);
 preferred_solid_v    = solidity_ws(preferred_valid_flag);
@@ -297,10 +284,16 @@ preferred_fmin_v     = feret_min_ws_um(preferred_valid_flag);
 preferred_fratio_v   = feret_aspect_ratio_ws(preferred_valid_flag);
 preferred_nn_radius_v = nn_radius_px(preferred_valid_flag);
 preferred_valley_c_v   = valley_z_c_um(preferred_valid_flag & valid_flag_c);
+preferred_base_position_c_v = mound_base_position_um(preferred_valid_flag & valid_flag_c);
 preferred_height_c_v   = mound_height_c_um(preferred_valid_flag & valid_flag_c);
 preferred_rv_c_v       = Rv_c_per_mound(preferred_valid_flag & valid_flag_c);
 preferred_rz_c_v       = Rz_c_per_mound(preferred_valid_flag & valid_flag_c);
 bc_both_valid = preferred_valid_flag & valid_flag_c;
+preferred_shape_valid_flag = preferred_valid_flag & valid_flag_c;
+preferred_ar_shape_v = aspect_ratio_ws(preferred_shape_valid_flag);
+preferred_diam_shape_v = equiv_diam_ws_um(preferred_shape_valid_flag);
+preferred_cx_shape_v = centroids(preferred_shape_valid_flag, 1);
+preferred_cy_shape_v = centroids(preferred_shape_valid_flag, 2);
 n_valid_c = sum(valid_flag_c);
 n_bc_both = sum(bc_both_valid);
 
@@ -321,7 +314,7 @@ fprintf('  NN radius used              : %.1f +/- %.1f px  (%.2f +/- %.2f um)\n'
     mean(preferred_nn_radius_v) * xy, std(preferred_nn_radius_v) * xy);
 fprintf('  Peak Z (above scan floor)   : %.2f +/- %.2f um\n', mean(preferred_peak_v), std(preferred_peak_v));
 fprintf('  Valley Z (NN circle)        : %.2f +/- %.2f um\n', mean(preferred_valley_v), std(preferred_valley_v));
-fprintf('  Mound height (peak-valley)  : %.2f +/- %.2f um\n', mean(preferred_height_v), std(preferred_height_v));
+fprintf('  Roughness span (Method B)   : %.2f +/- %.2f um\n', mean(preferred_height_b_v), std(preferred_height_b_v));
 fprintf('  Rp per mound (above plane)  : %.2f +/- %.2f um\n', mean(preferred_rp_v), std(preferred_rp_v));
 fprintf('  Rv per mound (NN circle)    : %.2f +/- %.2f um\n', mean(preferred_rv_v), std(preferred_rv_v));
 fprintf('  Rz per mound (preferred)    : %.2f +/- %.2f um\n', mean(preferred_rz_v), std(preferred_rz_v));
@@ -333,7 +326,13 @@ fprintf('  Circularity / solidity      : %.3f +/- %.3f  /  %.3f +/- %.3f\n', ...
     mean(preferred_circ_v), std(preferred_circ_v), mean(preferred_solid_v), std(preferred_solid_v));
 fprintf('  Method C valid mounds       : %d / %d\n', n_valid_c, n_total);
 if n_bc_both > 0
-    fprintf('  Method C boundary valley    : %.2f +/- %.2f um\n', mean(preferred_valley_c_v), std(preferred_valley_c_v));
+    fprintf('  Mound base Z (Method C)     : %.2f +/- %.2f um\n', mean(preferred_valley_c_v), std(preferred_valley_c_v));
+    fprintf('  Mound base position         : %.2f +/- %.2f um\n', mean(preferred_base_position_c_v), std(preferred_base_position_c_v));
+    fprintf('  Mound height (Method C)     : %.2f +/- %.2f um\n', mean(preferred_height_c_v), std(preferred_height_c_v));
+    fprintf('  Watershed peak Z            : %.2f +/- %.2f um\n', ...
+        mean(watershed_peak_z_um(preferred_valid_flag), 'omitnan'), std(watershed_peak_z_um(preferred_valid_flag), 'omitnan'));
+    fprintf('  Rp - watershed-peak Rp      : %.2f +/- %.2f um\n', ...
+        mean(Rp_vs_watershed_peak_diff_um(preferred_valid_flag), 'omitnan'), std(Rp_vs_watershed_peak_diff_um(preferred_valid_flag), 'omitnan'));
     fprintf('  Paired difference (C-B Rv)  : %.2f +/- %.2f um  (n=%d paired)\n', ...
         mean(Rv_c_per_mound(bc_both_valid) - Rv_nn_per_mound(bc_both_valid)), ...
         std(Rv_c_per_mound(bc_both_valid) - Rv_nn_per_mound(bc_both_valid)), n_bc_both);
@@ -342,13 +341,15 @@ end
 fprintf('  Generating figures...\n');
 makeWatershedDiagnosticFigure(I_rgb, imageName, outputDir, centroids, watershed_L, preferred_valid_flag, added_edge_seed_centroids);
 makeAugmentedSeedDiagnosticFigure(m1, I_rgb, imageName, outputDir, centroids, Z_smooth, preferred_valid_flag);
-makeMethodBCComparisonFigure(I_rgb, centroids, preferred_valid_flag, circle_mask_store, boundary_band_store, ...
+makeMethodCBaseBandDiagnosticFigure(I_rgb, imageName, outputDir, base_band_label_img, watershed_border_mask_img, ...
+    centroids, watershed_peak_rowcol_px, valid_flag_c);
+makeMethodBCComparisonFigure(I_rgb, centroids, preferred_valid_flag, circle_mask_store, base_band_store, ...
     crop_boxes, boundary_band_boxes, valley_px_b, imageName, outputDir, Rv_nn_per_mound, Rv_c_per_mound, ...
-    bc_both_valid, nn_radius_px, xy, preferred_height_v, preferred_height_c_v, n_valid_nn, n_valid_c);
+    bc_both_valid, nn_radius_px, xy, preferred_height_b_v, preferred_height_c_v, n_valid_nn, n_valid_c);
 makeShapeOverlayFigure(I_rgb, imageName, outputDir, centroids, preferred_valid_flag, ...
-    preferred_cx_v, preferred_cy_v, preferred_diam_v, preferred_height_v, preferred_ar_v, xy);
+    preferred_cx_shape_v, preferred_cy_shape_v, preferred_diam_shape_v, preferred_height_c_v, preferred_ar_shape_v, xy);
 makeMorphologyHistFigure(imageName, outputDir, preferred_peak_v, preferred_valley_v, ...
-    preferred_height_v, preferred_fp_v, preferred_diam_v, preferred_ar_v, ...
+    preferred_height_c_v, preferred_fp_v, preferred_diam_shape_v, preferred_ar_shape_v, ...
     preferred_fmax_v, preferred_fmin_v, preferred_fratio_v, preferred_circ_v, ...
     preferred_solid_v, preferred_convexity_v);
 makeRzDiagFigure(imageName, outputDir, preferred_rp_v, preferred_rv_v, preferred_rz_v, ...
@@ -360,41 +361,36 @@ xlsx_path = fullfile(outputDir, [imageName '_mound_shapes.xlsx']);
 mound_table = table( ...
     (1:n_total)', ...
     centroids(:,1), centroids(:,2), centroids(:,1) * xy, centroids(:,2) * xy, ...
-    peak_z_um, ...
+    peak_z_um, watershed_peak_z_um, watershed_peak_rowcol_px(:,2), watershed_peak_rowcol_px(:,1), ...
+    watershed_peak_Rp_um, Rp_vs_watershed_peak_diff_um, ...
     nn_radius_px, nn_radius_px * xy, ...
     valley_z_nn_um, mound_height_nn_um, Rv_nn_per_mound, Rz_b_per_mound, double(valid_flag_nn), ...
-    valley_z_c_um, mound_height_c_um, Rv_c_per_mound, Rz_c_per_mound, double(valid_flag_c), ...
+    valley_z_c_um, mound_base_position_um, mound_height_c_um, Rv_c_per_mound, Rz_c_per_mound, double(valid_flag_c), ...
     footprint_ws_um2, equiv_diam_ws_um, aspect_ratio_ws, perimeter_ws_um, circularity_ws, solidity_ws, convexity_ws, ...
     convex_area_ratio_ws, extent_ws, major_axis_ws_um, minor_axis_ws_um, ...
     feret_max_ws_um, feret_min_ws_um, feret_aspect_ratio_ws, feret_orientation_ws_deg, double(valid_flag_ws), ...
-    footprint_um2, equiv_diam_um, aspect_ratio, perimeter_um, circularity, ...
-    solidity, convexity, convex_area_ratio, extent, major_axis_um, ...
-    minor_axis_um, feret_max_um, feret_min_um, feret_aspect_ratio, ...
-    feret_orientation_deg, ...
     'VariableNames', { ...
         'MoundIndex', 'X_px', 'Y_px', 'X_um', 'Y_um', ...
-        'PeakZ_um', ...
+        'PeakZ_um', 'WatershedPeakZ_um', 'WatershedPeakX_px', 'WatershedPeakY_px', ...
+        'WatershedPeakRp_um', 'RpMinusWatershedPeakRp_um', ...
         'NNradius_px', 'NNradius_um', ...
         'ValleyZ_B_um', 'MoundHeight_B_um', 'Rv_B_um', 'Rz_B_um', 'Valid_B', ...
-        'ValleyZ_C_um', 'MoundHeight_C_um', 'Rv_C_um', 'Rz_C_um', 'Valid_C', ...
+        'BaseZ_C_um', 'BasePosition_C_um', 'MoundHeight_C_um', 'Rv_C_um', 'Rz_C_um', 'Valid_C', ...
         'FootprintArea_um2', 'EquivDiameter_um', 'AspectRatio', 'Perimeter_um', ...
         'Circularity', 'Solidity', 'Convexity', 'ConvexAreaRatio', 'Extent', ...
         'MajorAxis_um', 'MinorAxis_um', ...
-        'FeretMax_um', 'FeretMin_um', 'FeretAspectRatio', 'FeretOrientation_deg', 'Valid_Footprint', ...
-        'Voronoi_FootprintArea_um2', 'Voronoi_EquivDiameter_um', 'Voronoi_AspectRatio', 'Voronoi_Perimeter_um', ...
-        'Voronoi_Circularity', 'Voronoi_Solidity', 'Voronoi_Convexity', 'Voronoi_ConvexAreaRatio', 'Voronoi_Extent', ...
-        'Voronoi_MajorAxis_um', 'Voronoi_MinorAxis_um', 'Voronoi_FeretMax_um', 'Voronoi_FeretMin_um', ...
-        'Voronoi_FeretAspectRatio', 'Voronoi_FeretOrientation_deg'});
+        'FeretMax_um', 'FeretMin_um', 'FeretAspectRatio', 'FeretOrientation_deg', 'Valid_Footprint'});
 writetable(mound_table, xlsx_path, 'Sheet', 'PerMound');
 
 summary = table( ...
     {imageName}, {'NN_circle_watershed_halfmax'}, ...
     sum(preferred_valid_flag), n_valid_c, n_total - sum(preferred_valid_flag), ...
     refPlane_um, Rp_global, Rv_global, Rz_global, ...
-    mean(preferred_height_v), std(preferred_height_v), ...
+    mean(preferred_height_c_v), std(preferred_height_c_v), ...
     mean(preferred_rp_v), std(preferred_rp_v), ...
     mean(preferred_rv_v), std(preferred_rv_v), ...
     mean(preferred_rz_v), std(preferred_rz_v), ...
+    mean(preferred_base_position_c_v), std(preferred_base_position_c_v), ...
     mean(preferred_height_c_v), std(preferred_height_c_v), ...
     mean(preferred_rv_c_v), std(preferred_rv_c_v), ...
     mean(preferred_rz_c_v), std(preferred_rz_c_v), ...
@@ -418,6 +414,7 @@ summary = table( ...
         'Mean_Rp_preferred_um', 'Std_Rp_preferred_um', ...
         'Mean_Rv_preferred_um', 'Std_Rv_preferred_um', ...
         'Mean_Rz_preferred_um', 'Std_Rz_preferred_um', ...
+        'Mean_MoundBasePosition_um', 'Std_MoundBasePosition_um', ...
         'Mean_MoundHeight_C_um', 'Std_MoundHeight_C_um', ...
         'Mean_Rv_C_um', 'Std_Rv_C_um', ...
         'Mean_Rz_C_um', 'Std_Rz_C_um', ...
@@ -442,6 +439,10 @@ moundResults.n_valid_c        = n_valid_c;
 moundResults.n_total          = n_total;
 moundResults.peak_z_um        = peak_z_um;
 moundResults.Rp_per_mound     = Rp_per_mound;
+moundResults.watershed_peak_z_um = watershed_peak_z_um;
+moundResults.watershed_peak_rowcol_px = watershed_peak_rowcol_px;
+moundResults.watershed_peak_Rp_um = watershed_peak_Rp_um;
+moundResults.Rp_minus_watershed_peak_Rp_um = Rp_vs_watershed_peak_diff_um;
 moundResults.valley_z_nn_um   = valley_z_nn_um;
 moundResults.mound_height_nn_um = mound_height_nn_um;
 moundResults.nn_radius_px     = nn_radius_px;
@@ -449,11 +450,13 @@ moundResults.Rv_nn_per_mound  = Rv_nn_per_mound;
 moundResults.Rz_b_per_mound   = Rz_b_per_mound;
 moundResults.valid_flag_nn    = valid_flag_nn;
 moundResults.valley_z_c_um    = valley_z_c_um;
+moundResults.mound_base_position_um = mound_base_position_um;
 moundResults.mound_height_c_um = mound_height_c_um;
 moundResults.Rv_c_per_mound   = Rv_c_per_mound;
 moundResults.Rz_c_per_mound   = Rz_c_per_mound;
 moundResults.valid_flag_c     = valid_flag_c;
-moundResults.method_c_band_radius_px = METHOD_C_BAND_RADIUS_PX;
+moundResults.mound_base_valid_flag = valid_flag_c;
+moundResults.method_c_band_width_px = METHOD_C_BASE_BAND_WIDTH_PX;
 moundResults.footprint_um2    = footprint_ws_um2;
 moundResults.equiv_diam_um    = equiv_diam_ws_um;
 moundResults.aspect_ratio     = aspect_ratio_ws;
@@ -485,37 +488,32 @@ moundResults.watershed_feret_max_um = feret_max_ws_um;
 moundResults.watershed_feret_min_um = feret_min_ws_um;
 moundResults.watershed_feret_aspect_ratio = feret_aspect_ratio_ws;
 moundResults.watershed_feret_orientation_deg = feret_orientation_ws_deg;
-moundResults.voronoi_footprint_um2 = footprint_um2;
-moundResults.voronoi_equiv_diam_um = equiv_diam_um;
-moundResults.voronoi_aspect_ratio = aspect_ratio;
-moundResults.voronoi_perimeter_um = perimeter_um;
-moundResults.voronoi_circularity = circularity;
-moundResults.voronoi_solidity = solidity;
-moundResults.voronoi_convexity = convexity;
-moundResults.voronoi_convex_area_ratio = convex_area_ratio;
-moundResults.voronoi_extent = extent;
-moundResults.voronoi_major_axis_um = major_axis_um;
-moundResults.voronoi_minor_axis_um = minor_axis_um;
-moundResults.voronoi_feret_max_um = feret_max_um;
-moundResults.voronoi_feret_min_um = feret_min_um;
-moundResults.voronoi_feret_aspect_ratio = feret_aspect_ratio;
-moundResults.voronoi_feret_orientation_deg = feret_orientation_deg;
 moundResults.Rz_per_mound     = Rz_b_per_mound;
 moundResults.preferred_method = 'NN_circle_watershed_halfmax';
 moundResults.preferred_valid_flag = preferred_valid_flag;
 moundResults.preferred_peak_z_um = peak_z_um;
 moundResults.preferred_valley_z_um = valley_z_nn_um;
-moundResults.preferred_mound_height_um = mound_height_nn_um;
 moundResults.preferred_Rp_per_mound = Rp_per_mound;
 moundResults.preferred_Rv_per_mound = Rv_nn_per_mound;
 moundResults.preferred_Rz_per_mound = Rz_b_per_mound;
+moundResults.mound_base_z_um = valley_z_c_um;
+moundResults.mound_height_um = mound_height_c_um;
+moundResults.preferred_mound_base_z_um = valley_z_c_um;
+moundResults.preferred_mound_base_position_um = mound_base_position_um;
+moundResults.preferred_mound_height_um = mound_height_c_um;
 moundResults.method_c_valley_z_um = valley_z_c_um;
+moundResults.method_c_valid_flag = valid_flag_c;
+moundResults.method_c_base_z_um = valley_z_c_um;
+moundResults.method_c_base_position_um = mound_base_position_um;
 moundResults.method_c_mound_height_um = mound_height_c_um;
+moundResults.method_c_base_band_label_img = base_band_label_img;
+moundResults.method_c_watershed_border_mask = watershed_border_mask_img;
 moundResults.method_c_Rv_per_mound = Rv_c_per_mound;
 moundResults.method_c_Rz_per_mound = Rz_c_per_mound;
 moundResults.preferred_n_mounds = sum(preferred_valid_flag);
 moundResults.preferred_footprint_um2 = footprint_ws_um2;
 moundResults.preferred_equiv_diam_um = equiv_diam_ws_um;
+moundResults.preferred_aspect_ratio = aspect_ratio_ws;
 moundResults.preferred_perimeter_um = perimeter_ws_um;
 moundResults.preferred_circularity = circularity_ws;
 moundResults.preferred_solidity = solidity_ws;
@@ -551,6 +549,94 @@ function [rowColGlobal] = findMaskPixel(mask, maskedIndex, r0, c0)
 lin_idx = find(mask);
 [rr, cc] = ind2sub(size(mask), lin_idx(maskedIndex));
 rowColGlobal = [rr + r0 - 1, cc + c0 - 1];
+end
+
+function [peak_z_um, peak_rowcol_global] = findRegionPeakPixel(region_mask, Z_local_raw, r0, c0)
+peak_z_um = NaN;
+peak_rowcol_global = [NaN NaN];
+if ~any(region_mask(:))
+    return;
+end
+
+z_vals = Z_local_raw(region_mask);
+[peak_z_um, idx_max] = max(z_vals);
+lin_idx = find(region_mask);
+[rr, cc] = ind2sub(size(region_mask), lin_idx(idx_max));
+peak_rowcol_global = [rr + r0 - 1, cc + c0 - 1];
+end
+
+function [base_band_mask, base_samples_um] = buildMethodCBaseBand(region_mask, boundary_mask, Z_local_raw, centroid_xy)
+base_band_mask = false(size(region_mask));
+base_samples_um = zeros(0, 1);
+
+if ~any(boundary_mask(:))
+    return;
+end
+
+D_in = bwdist(~region_mask);
+[rb, cb] = find(boundary_mask);
+base_band_mask(boundary_mask) = true;
+
+for i = 1:numel(rb)
+    r0 = rb(i);
+    c0 = cb(i);
+    z_boundary = Z_local_raw(r0, c0);
+
+    rr1 = max(1, r0 - 1);
+    rr2 = min(size(region_mask,1), r0 + 1);
+    cc1 = max(1, c0 - 1);
+    cc2 = min(size(region_mask,2), c0 + 1);
+
+    local_region = region_mask(rr1:rr2, cc1:cc2);
+    local_dist   = D_in(rr1:rr2, cc1:cc2);
+    local_rows   = rr1:rr2;
+    local_cols   = cc1:cc2;
+    [Rloc, Cloc] = ndgrid(local_rows, local_cols);
+    inward_mask = local_region & (local_dist > 0);
+
+    if any(inward_mask(:))
+        inward_rows = Rloc(inward_mask);
+        inward_cols = Cloc(inward_mask);
+        inward_z    = Z_local_raw(sub2ind(size(Z_local_raw), inward_rows, inward_cols));
+        inward_dist = D_in(sub2ind(size(D_in), inward_rows, inward_cols));
+        inward_centroid_d2 = (inward_cols - centroid_xy(1)).^2 + (inward_rows - centroid_xy(2)).^2;
+        min_step = min(inward_dist);
+        keep = (inward_dist == min_step);
+        inward_rows = inward_rows(keep);
+        inward_cols = inward_cols(keep);
+        inward_z = inward_z(keep);
+        inward_centroid_d2 = inward_centroid_d2(keep);
+        [~, order_idx] = sort(inward_centroid_d2, 'ascend');
+        r_in = inward_rows(order_idx(1));
+        c_in = inward_cols(order_idx(1));
+        z_in = inward_z(order_idx(1));
+        base_band_mask(r_in, c_in) = true;
+        base_samples_um(end+1, 1) = min(z_boundary, z_in); %#ok<AGROW>
+    else
+        base_samples_um(end+1, 1) = z_boundary; %#ok<AGROW>
+    end
+end
+end
+
+function boundary_mask = getRegionWatershedBorderMask(local_ws_labels, target_label)
+region_mask = (local_ws_labels == target_label);
+boundary_mask = false(size(region_mask));
+if ~any(region_mask(:))
+    return;
+end
+
+adjacent_to_region = imdilate(region_mask, true(3));
+zero_border = (local_ws_labels == 0) & adjacent_to_region;
+boundary_mask = boundary_mask | zero_border;
+
+touches_image_edge = any(region_mask(1,:)) || any(region_mask(end,:)) || any(region_mask(:,1)) || any(region_mask(:,end));
+if touches_image_edge
+    boundary_mask = boundary_mask | bwperim(region_mask, 4);
+end
+
+if ~any(boundary_mask(:))
+    boundary_mask = bwperim(region_mask, 4);
+end
 end
 
 function component_mask = extractCentroidComponent(binaryMask, r_c_loc, c_c_loc)
@@ -609,6 +695,61 @@ convex_perimeter_um = sum(sqrt(sum(seg.^2, 2))) * xy;
 fmax_um = fmax_px * xy;
 fmin_um = fmin_px * xy;
 aspect_ratio = fmax_um / max(fmin_um, eps);
+end
+
+function makeMethodCBaseBandDiagnosticFigure(I_rgb, imageName, outputDir, base_band_labels, watershed_border_mask, centroids, watershed_peak_rowcol_px, valid_flag_c)
+valid_labels = unique(base_band_labels(base_band_labels > 0));
+if isempty(valid_labels)
+    fprintf('  Skipped Method C base-band diagnostic: no valid base bands.\n');
+    return;
+end
+
+fig = figure('Name', 'Method C base-band diagnostic', 'Position', [60 60 1450 780], 'Color', 'w');
+ax = axes(fig);
+imshow(I_rgb, 'Parent', ax); hold(ax, 'on');
+
+cmap = turbo(max(valid_labels));
+overlay = zeros(size(I_rgb), 'uint8');
+alpha_mask = zeros(size(base_band_labels));
+for i = 1:numel(valid_labels)
+    k = valid_labels(i);
+    mask_k = (base_band_labels == k);
+    color_k = uint8(round(255 * cmap(k, :)));
+    for ch = 1:3
+        layer = overlay(:,:,ch);
+        layer(mask_k) = color_k(ch);
+        overlay(:,:,ch) = layer;
+    end
+    alpha_mask(mask_k) = 0.88;
+end
+
+h = imshow(overlay, 'Parent', ax);
+h.AlphaData = alpha_mask;
+
+ws_overlay = zeros(size(I_rgb), 'uint8');
+for ch = 1:3
+    layer = ws_overlay(:,:,ch);
+    layer(watershed_border_mask) = 255;
+    ws_overlay(:,:,ch) = layer;
+end
+h_ws = imshow(ws_overlay, 'Parent', ax);
+h_ws.AlphaData = 0.95 * double(watershed_border_mask);
+
+plot(ax, centroids(valid_flag_c,1), centroids(valid_flag_c,2), 'c+', 'MarkerSize', 4.8, 'LineWidth', 0.9);
+peak_valid = all(isfinite(watershed_peak_rowcol_px), 2);
+plot(ax, watershed_peak_rowcol_px(peak_valid,2), watershed_peak_rowcol_px(peak_valid,1), 'wo', ...
+    'MarkerSize', 4.8, 'LineWidth', 0.9);
+if any(~valid_flag_c)
+    plot(ax, centroids(~valid_flag_c,1), centroids(~valid_flag_c,2), 'x', ...
+        'Color', [0.75 0.15 0.15], 'MarkerSize', 5, 'LineWidth', 0.8);
+end
+title(ax, sprintf('Method C base band: white watershed pixel + 1 inward pixel (n=%d valid)', sum(valid_flag_c)), 'FontSize', 10);
+hold(ax, 'off');
+
+sgtitle(fig, sprintf('%s | Method C base band with centroid and watershed-peak markers', imageName), 'Interpreter', 'none');
+outPath = fullfile(outputDir, [imageName '_method_c_base_band_diag.png']);
+exportgraphics(fig, outPath, 'Resolution', 150);
+fprintf('  Saved: %s\n', outPath);
 end
 
 function makeWatershedDiagnosticFigure(I_rgb, imageName, outputDir, centroids, ws_labels, preferred_valid_flag, added_edge_seed_centroids)
@@ -1160,7 +1301,7 @@ plot(ax2, centroids(valid_flag_b,1), centroids(valid_flag_b,2), 'g+', 'MarkerSiz
 if any(~valid_flag_b)
     plot(ax2, centroids(~valid_flag_b,1), centroids(~valid_flag_b,2), 'x', 'Color', [0.55 0.55 0.55], 'MarkerSize', 5);
 end
-title(ax2, 'Method C widened watershed boundary band', 'FontSize', 10);
+title(ax2, 'Method C two-pixel watershed base band', 'FontSize', 10);
 hold(ax2, 'off');
 
 ax3 = subplot(2, 2, 3);
@@ -1180,7 +1321,7 @@ if any(both_valid)
     cb = colorbar(ax3);
     cb.Label.String = 'NN radius (um)';
     xlabel(ax3, 'Rv - Method B circles (um)');
-    ylabel(ax3, 'Rv - Method C boundary band (um)');
+    ylabel(ax3, 'Base position - Method C (um)');
     title(ax3, sprintf('Paired Rv comparison (n=%d)', sum(both_valid)), 'FontSize', 10);
     legend(ax3, {'Mounds', '1:1 line', 'Linear fit'}, 'Location', 'northwest');
     grid(ax3, 'on');
@@ -1207,7 +1348,7 @@ else
     histogram(ax4, height_c, edges, 'FaceColor', [0.90 0.50 0.15], 'EdgeColor', 'none', 'FaceAlpha', 0.65);
     xline(ax4, mean(height_b, 'omitnan'), '-', 'Color', [0.10 0.35 0.75], 'LineWidth', 1.8);
     xline(ax4, mean(height_c, 'omitnan'), '-', 'Color', [0.75 0.30 0.05], 'LineWidth', 1.8);
-    xlabel(ax4, 'Mound height peak-valley (um)');
+    xlabel(ax4, 'Height / base-position magnitude (um)');
     ylabel(ax4, 'Count');
     legend(ax4, {sprintf('Method B (n=%d)', n_valid_b), sprintf('Method C (n=%d)', n_valid_c)}, 'Location', 'northeast');
     title(ax4, 'Mound height distribution - method comparison', 'FontSize', 10);

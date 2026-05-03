@@ -9,8 +9,9 @@ This document focuses on the outputs other than the `Rp`, `Rv`, and `Rz` familie
 The preferred interpretation in this function is:
 
 - valley-dependent quantities come from the nearest-neighbor-radius circle ("Method B")
+- roughness reporting uses `Rp` plus the Method B circle-based `Rv`
+- direct mound-height reporting uses the watershed-contained peak plus a Method C watershed-boundary base position
 - footprint geometry comes from a centroid-seeded watershed partition intersected with a raw `Z_raw` half-max mask
-- Voronoi-based footprint geometry is still available only as a comparison path
 
 Physically, that means the preferred numbers are trying to describe each mound using the local space that mound actually occupies, rather than a more arbitrary annulus-based background estimate.
 
@@ -47,18 +48,41 @@ Physically, that means the preferred numbers are trying to describe each mound u
 | Field | What is measured | What it means physically |
 | --- | --- | --- |
 | `peak_z_um` | Peak height near each mound center in the raw height map. | This tells you how tall each mound top sits above the scan floor, independent of where you decide the local valley is. |
+| `watershed_peak_z_um` | Highest raw-height pixel found anywhere inside the mound's watershed-bounded region. | This is a comparison peak that ignores the original centroid neighborhood and instead asks for the absolute highest point inside the mound territory. |
+| `watershed_peak_rowcol_px` | Pixel row and column of the watershed-contained highest point. | This gives you the exact location of the watershed peak so you can visually compare it against the original centroid placement. |
+| `watershed_peak_Rp_um` | `Rp` recalculated from the watershed-contained highest pixel. | This is the direct reference for checking whether the current centroid-near peak definition is underestimating or matching the true local summit. |
+| `Rp_minus_watershed_peak_Rp_um` | Difference between the current `Rp_per_mound` and the watershed-peak `Rp`. | Values below zero mean the current centroid-near peak estimate is sitting lower than the true highest pixel inside that mound's watershed region. |
 | `valley_z_um` | Legacy Method A valley height from the annulus region. | This is the old local valley estimate and is useful mostly for historical comparison. |
 | `valley_z_nn_um` | Preferred Method B valley height from the nearest-neighbor-radius circle. | This is the preferred local valley reference because it is tied to the local mound spacing and usually better reflects the true trough surrounding that mound. |
 | `preferred_peak_z_um` | Preferred alias of `peak_z_um`. | This keeps the preferred output family self-contained for downstream use. |
 | `preferred_valley_z_um` | Preferred alias of `valley_z_nn_um`. | This marks the Method B valley as the default valley interpretation for reporting. |
 
+## Mound base outputs
+
+These fields define the mound base using a `2`-pixel watershed base band built from each boundary step: the `1`-pixel watershed border itself plus `1` pixel inward into the mound region. At each boundary step, the lower of those two pixel heights is taken, and those per-step lows are then averaged around the mound. This is the base definition intended for direct mound-height reporting and future lift-out style mound profiles.
+
+| Field | What is measured | What it means physically |
+| --- | --- | --- |
+| `method_c_band_width_px` | Total width of the Method C base band. | This confirms the current mound-base definition uses exactly `2` pixels in width: the border pixel plus one inward pixel. |
+| `method_c_watershed_border_mask` | Full-image logical mask of the true watershed-line pixels used by Method C. | This is mainly a diagnostic geometry output so you can distinguish the actual watershed border from the inward second pixel in overlays. |
+| `mound_base_z_um` | Average of the per-step two-pixel minimum heights around the Method C watershed boundary. | This is the absolute surface height of the mound base, estimated from the local low side of the watershed boundary rather than from a broad average across a thicker band. |
+| `mound_base_position_um` | Mound base position relative to the global reference plane. | This is how far the base sits below the reference plane; positive values mean the base is below the mean surface level. |
+| `mound_base_valid_flag` | Boolean flag indicating the mound-base definition could be measured reliably. | This is the validity mask for the base-position and direct mound-height family. |
+| `preferred_mound_base_z_um` | Preferred alias of `mound_base_z_um`. | This keeps the direct mound-base definition in the preferred namespace. |
+| `preferred_mound_base_position_um` | Preferred alias of `mound_base_position_um`. | This makes the preferred base-position statistic easy to export and summarize. |
+| `method_c_valid_flag` | Explicit Method C validity flag for the mound-base path. | This preserves provenance for workflows that want to refer to the watershed-base method directly. |
+| `method_c_base_z_um` | Explicit Method C alias of `mound_base_z_um`. | This preserves provenance when you want to call out that the base came from the two-pixel watershed-boundary method. |
+| `method_c_base_position_um` | Explicit Method C alias of `mound_base_position_um`. | This preserves provenance for the reference-plane-relative base position. |
+
 ## Height outputs other than Rp/Rv/Rz
 
 | Field | What is measured | What it means physically |
 | --- | --- | --- |
-| `mound_height_um` | Legacy Method A peak-to-valley mound height. | This is the old estimate of how far a mound rises above its local surroundings. |
-| `mound_height_nn_um` | Preferred Method B peak-to-valley mound height. | This is the preferred mound elevation above the nearby trough, so it is usually the most direct geometric measure of how pronounced each mound is. |
-| `preferred_mound_height_um` | Preferred alias of `mound_height_nn_um`. | This makes the preferred height easy to consume without checking legacy fields. |
+| `mound_height_um` | Direct mound height from `watershed_peak_Rp_um + mound_base_position_um`. | This is the preferred direct mound-height statistic because it now uses the true highest pixel inside each watershed-bounded mound together with the watershed-defined mound base. |
+| `mound_height_nn_um` | Method B peak-to-valley span from the nearest-neighbor-radius circle. | This is still useful, but it now fits better as a roughness-adjacent span than as the main direct mound-height definition. |
+| `mound_height_c_um` | Method C mound height from `watershed_peak_Rp_um +` the watershed-boundary base position. | This is the explicit Method C form of direct mound height. |
+| `preferred_mound_height_um` | Preferred alias of `mound_height_um`. | This is the direct mound-height output you should usually use for per-mound height statistics and future lift-out style profile work. |
+| `method_c_mound_height_um` | Explicit Method C alias of `mound_height_c_um`. | This preserves provenance when you want to call out the watershed-base definition directly. |
 
 ## Footprint size outputs
 
@@ -68,17 +92,18 @@ Physically, that means the preferred numbers are trying to describe each mound u
 | `equiv_diam_um` | Diameter of a circle with the same area as the footprint. | This converts an irregular footprint into one intuitive width number, making mound size easier to compare across surfaces. |
 | `preferred_footprint_um2` | Preferred alias of `footprint_um2`. | This flags the raw half-max area as the default footprint area for reporting. |
 | `preferred_equiv_diam_um` | Preferred alias of `equiv_diam_um`. | This flags the raw half-max equivalent diameter as the default width metric. |
+| `preferred_aspect_ratio` | Preferred alias of `aspect_ratio`. | This keeps the preferred height-to-width ratio grouped with the rest of the preferred geometry family. |
 
-## Watershed comparison footprint outputs
+## Watershed footprint outputs
 
-These fields are now the preferred footprint family. They use the same half-max height threshold as before, but they restrict the footprint using a centroid-seeded watershed partition. Physically, they are trying to let the topography define where one mound hands off to the next.
+These fields are the preferred footprint family. They use the same half-max height threshold as before, but they restrict the footprint using a centroid-seeded watershed partition. Physically, they are trying to let the topography define where one mound hands off to the next.
 
 | Field | What is measured | What it means physically |
 | --- | --- | --- |
 | `watershed_valid_flag` | Boolean flag indicating a watershed-based half-max footprint could be extracted for that mound. | This tells you whether the watershed comparison path produced a usable mound body for that feature. |
 | `watershed_footprint_um2` | Watershed-restricted half-max footprint area in square micrometers. | This is the mound area you get when the lateral territory is defined by topographic basins rather than nearest-centroid distance. |
 | `watershed_equiv_diam_um` | Equivalent diameter from the watershed-based footprint area. | This is the watershed-based version of mound width. |
-| `watershed_aspect_ratio` | Height-to-diameter ratio using the watershed-based equivalent diameter. | This shows how slender or squat the mound looks when width is measured from the watershed footprint. |
+| `watershed_aspect_ratio` | Height-to-diameter ratio using the watershed-based equivalent diameter and the Method C mound height. | This shows how slender or squat the mound looks when width is measured from the watershed footprint and height is measured from the watershed-defined base. |
 | `watershed_perimeter_um` | Watershed-based footprint perimeter. | This tells you how long the mound boundary is when topography-following partitioning is used. |
 | `watershed_circularity` | Circularity of the watershed-based footprint. | This shows how close the watershed-defined footprint is to a compact circular mound. |
 | `watershed_solidity` | Solidity of the watershed-based footprint. | This captures how concave or indented the watershed-defined footprint is. |
@@ -144,6 +169,7 @@ These fields are now the preferred footprint family. They use the same half-max 
 | --- | --- | --- |
 | `valid_flag` | Boolean flag indicating the mound passed legacy Method A checks. | This marks whether the old annulus-based measurement for that mound looked physically usable. |
 | `valid_flag_nn` | Boolean flag indicating the mound passed Method B checks. | This marks whether the preferred nearest-neighbor-circle valley and half-max footprint could be measured reliably. |
+| `valid_flag_c` | Boolean flag indicating the Method C watershed-boundary base could be measured reliably. | This is the validity mask for the direct mound-base and mound-height family. |
 | `preferred_valid_flag` | Preferred alias of `valid_flag_nn`. | This is the mask you should normally use when calculating averages or comparing per-mound preferred metrics. |
 
 ## Roughness-family fields listed for completeness
@@ -168,11 +194,11 @@ These are intentionally not expanded here in detail because you asked to skip `R
 If you want a short "what should I look at first?" reading order for Module 3:
 
 1. `preferred_mound_height_um`
-2. `preferred_footprint_um2`
-3. `preferred_equiv_diam_um`
-4. `preferred_circularity`
-5. `preferred_solidity`
-6. `preferred_feret_aspect_ratio`
-7. `preferred_feret_orientation_deg`
+2. `preferred_mound_base_position_um`
+3. `preferred_footprint_um2`
+4. `preferred_equiv_diam_um`
+5. `preferred_circularity`
+6. `preferred_solidity`
+7. `preferred_feret_aspect_ratio`
 
-That sequence moves from "how tall is the mound" to "how wide is it" to "how round or elongated is it."
+That sequence moves from "where is the mound base and how tall is the mound" to "how wide is it" to "how round or elongated is it."

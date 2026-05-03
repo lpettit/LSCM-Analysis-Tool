@@ -51,10 +51,21 @@ try
     m3 = analyzeMoundShape(m1, outDir);
     assert(isfield(m3, 'Rz_per_mound'));
     assert(isfield(m3, 'preferred_Rz_per_mound'));
+    assert(isfield(m3, 'mound_base_position_um'));
+    assert(isfield(m3, 'preferred_mound_base_position_um'));
+    assert(isfield(m3, 'mound_height_um'));
+    assert(isfield(m3, 'method_c_band_width_px'));
+    assert(isfield(m3, 'watershed_peak_z_um'));
+    assert(isfield(m3, 'watershed_peak_rowcol_px'));
+    assert(isfield(m3, 'watershed_peak_Rp_um'));
+    assert(isfield(m3, 'Rp_minus_watershed_peak_Rp_um'));
     assert(isfield(m3, 'feret_max_um'));
     assert(isfield(m3, 'feret_min_um'));
     assert(isfield(m3, 'circularity'));
     assert(all(isfinite(m3.preferred_Rz_per_mound(m3.preferred_valid_flag))));
+    assert(all(isfinite(m3.preferred_mound_height_um(m3.valid_flag_c))));
+    assert(m3.method_c_band_width_px == 2);
+    assert(any(isfinite(m3.watershed_peak_z_um)));
     assert(all(isfinite(m3.feret_max_um(m3.preferred_valid_flag))));
 
     results(end+1) = struct( ... %#ok<AGROW>
