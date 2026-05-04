@@ -54,9 +54,8 @@ I_rgb        = repmat(m1.I_raw, [1 1 3]);
 [imgH, imgW] = size(Z_raw);
 METHOD_C_BASE_BAND_WIDTH_PX = 2;
 
-smooth_sigma = 10;
-Z_smooth     = imgaussfilt(Z_raw, smooth_sigma);
-fprintf('  Height map smoothed (sigma=%d px)\n', smooth_sigma);
+D_nn = computeNearestNeighborDistances(centroids, nn_mean_px);
+spacing_px = computeRepresentativeSpacingPx(D_nn, nn_mean_px);
 
 refPlane_um = mean(Z_raw(:));
 Rp_global   = max(Z_raw(:)) - refPlane_um;
@@ -75,18 +74,21 @@ if ~aug_ok
     watershed_seed_centroids = centroids;
     added_edge_seed_centroids = zeros(0, 2);
 end
-watershed_L = computeSeededWatershedLabels(Z_smooth, watershed_seed_centroids);
+watershed_selection = selectWatershedSmoothing(Z_raw, watershed_seed_centroids, centroids, spacing_px);
+smooth_sigma = watershed_selection.best_sigma_px;
+Z_smooth = watershed_selection.Z_smooth;
+watershed_L = watershed_selection.watershed_L;
+fprintf('  Height map smoothed (selected sigma=%.2f px from spacing %.2f px)\n', ...
+    smooth_sigma, spacing_px);
+fprintf('  Watershed sigma candidates: %s\n', mat2str(watershed_selection.candidate_sigmas_px, 3));
+fprintf('  Selected watershed score: %.3f\n', watershed_selection.best_score);
 fprintf('  Watershed partition complete\n');
 [X_full, Y_full] = meshgrid(1:imgW, 1:imgH);
-
-dist_matrix = sqrt( ...
-    (centroids(:,1) - centroids(:,1)').^2 + ...
-    (centroids(:,2) - centroids(:,2)').^2);
-dist_matrix(logical(eye(n_total))) = Inf;
-D_nn = min(dist_matrix, [], 2);
 bbox_r = ceil(max(D_nn) * 1.10) + 4;
 
 peak_z_um            = nan(n_total, 1);
+centroid_peak_z_um   = nan(n_total, 1);
+centroid_peak_Rp_um  = nan(n_total, 1);
 Rp_per_mound         = nan(n_total, 1);
 watershed_peak_z_um  = nan(n_total, 1);
 watershed_peak_rowcol_px = nan(n_total, 2);
@@ -146,7 +148,8 @@ for k = 1:n_total
     peak_win = 2;
     r_p1 = max(1, r_c - peak_win); r_p2 = min(imgH, r_c + peak_win);
     c_p1 = max(1, c_c - peak_win); c_p2 = min(imgW, c_c + peak_win);
-    peak_z_um(k) = max(max(Z_raw(r_p1:r_p2, c_p1:c_p2)));
+    centroid_peak_z_um(k) = max(max(Z_raw(r_p1:r_p2, c_p1:c_p2)));
+    centroid_peak_Rp_um(k) = centroid_peak_z_um(k) - refPlane_um;
 
     r1 = max(1, r_c - bbox_r); r2 = min(imgH, r_c + bbox_r);
     c1 = max(1, c_c - bbox_r); c2 = min(imgW, c_c + bbox_r);
@@ -154,7 +157,6 @@ for k = 1:n_total
 
     watershed_loc = watershed_L(r1:r2, c1:c2);
     Z_loc_raw   = Z_raw(r1:r2, c1:c2);
-    Rp_per_mound(k) = peak_z_um(k) - refPlane_um;
 
     r_nn_k = D_nn(k);
     nn_radius_px(k) = r_nn_k;
@@ -178,19 +180,6 @@ for k = 1:n_total
 
     Z_circle_raw = Z_raw(r1_nn:r2_nn, c1_nn:c2_nn);
     [valley_z_nn_um(k), idx_min_b] = min(Z_circle_raw(circle_px));
-    mound_height_nn_um(k) = peak_z_um(k) - valley_z_nn_um(k);
-    if mound_height_nn_um(k) <= 0
-        skip_reason_nn{k} = 'NN circle: peak not above valley';
-        continue;
-    end
-
-    Rv_nn_per_mound(k) = refPlane_um - valley_z_nn_um(k);
-    if ~isnan(Rp_per_mound(k))
-        Rz_b_per_mound(k) = Rp_per_mound(k) + Rv_nn_per_mound(k);
-    end
-    valley_px_b(k, :) = findMaskPixel(circle_px, idx_min_b, r1_nn, c1_nn);
-    valid_flag_nn(k) = true;
-
     [rows_k, cols_k] = find(watershed_L == k);
     if isempty(rows_k)
         skip_reason_c{k} = 'empty watershed region';
@@ -208,7 +197,25 @@ for k = 1:n_total
     base_band_store{k} = base_band_mask;
     [watershed_peak_z_um(k), watershed_peak_rowcol_px(k, :)] = findRegionPeakPixel(region_c, Z_raw(r1_c:r2_c, c1_c:c2_c), r1_c, c1_c);
     watershed_peak_Rp_um(k) = watershed_peak_z_um(k) - refPlane_um;
-    Rp_vs_watershed_peak_diff_um(k) = Rp_per_mound(k) - watershed_peak_Rp_um(k);
+    peak_z_um(k) = watershed_peak_z_um(k);
+    Rp_per_mound(k) = watershed_peak_Rp_um(k);
+    Rp_vs_watershed_peak_diff_um(k) = centroid_peak_Rp_um(k) - watershed_peak_Rp_um(k);
+    if ~isfinite(peak_z_um(k)) || ~isfinite(Rp_per_mound(k))
+        skip_reason_nn{k} = 'invalid watershed peak';
+        skip_reason_c{k} = 'invalid watershed peak';
+        continue;
+    end
+
+    mound_height_nn_um(k) = peak_z_um(k) - valley_z_nn_um(k);
+    if mound_height_nn_um(k) <= 0
+        skip_reason_nn{k} = 'NN circle: watershed peak not above valley';
+        continue;
+    end
+
+    Rv_nn_per_mound(k) = refPlane_um - valley_z_nn_um(k);
+    Rz_b_per_mound(k) = Rp_per_mound(k) + Rv_nn_per_mound(k);
+    valley_px_b(k, :) = findMaskPixel(circle_px, idx_min_b, r1_nn, c1_nn);
+    valid_flag_nn(k) = true;
     if numel(base_samples_um) < 5
         skip_reason_c{k} = sprintf('too few base-band samples (%d)', numel(base_samples_um));
     else
@@ -236,21 +243,41 @@ for k = 1:n_total
     footprint_mask_store{k} = component_mask;
     stats_ws = regionprops(component_mask, 'Area', 'Perimeter', 'Solidity', ...
         'Extent', 'MajorAxisLength', 'MinorAxisLength', 'ConvexArea');
+    if isempty(stats_ws)
+        skip_reason_nn{k} = 'empty watershed footprint stats';
+        continue;
+    end
     fp_ws = stats_ws(1);
+    if fp_ws.Area < 5 || fp_ws.Perimeter <= 0 || fp_ws.ConvexArea <= 0
+        skip_reason_nn{k} = sprintf('degenerate watershed footprint (area=%.1f, perimeter=%.3g)', ...
+            fp_ws.Area, fp_ws.Perimeter);
+        continue;
+    end
     [feret_max_ws_um(k), feret_min_ws_um(k), feret_orientation_ws_deg(k), ...
         feret_aspect_ratio_ws(k), convex_perimeter_ws_um] = computeFeretMetrics(component_mask, xy);
+    if ~isfinite(feret_max_ws_um(k)) || ~isfinite(feret_min_ws_um(k)) || ...
+            feret_max_ws_um(k) <= 0 || feret_min_ws_um(k) <= 0 || ...
+            ~isfinite(convex_perimeter_ws_um) || convex_perimeter_ws_um <= 0
+        skip_reason_nn{k} = 'invalid Feret geometry for watershed footprint';
+        continue;
+    end
 
     footprint_ws_um2(k)      = fp_ws.Area * xy^2;
     equiv_diam_ws_um(k)      = 2 * sqrt(footprint_ws_um2(k) / pi);
     aspect_ratio_ws(k)       = mound_height_c_um(k) / max(equiv_diam_ws_um(k), eps);
     perimeter_ws_um(k)       = fp_ws.Perimeter * xy;
-    circularity_ws(k)        = 4 * pi * fp_ws.Area / max(fp_ws.Perimeter^2, eps);
+    circularity_ws(k)        = 4 * pi * fp_ws.Area / (fp_ws.Perimeter^2);
     solidity_ws(k)           = fp_ws.Solidity;
     convex_area_ratio_ws(k)  = fp_ws.Area / max(fp_ws.ConvexArea, eps);
     extent_ws(k)             = fp_ws.Extent;
     major_axis_ws_um(k)      = fp_ws.MajorAxisLength * xy;
     minor_axis_ws_um(k)      = fp_ws.MinorAxisLength * xy;
     convexity_ws(k)          = convex_perimeter_ws_um / max(perimeter_ws_um(k), eps);
+    if ~isfinite(circularity_ws(k)) || circularity_ws(k) <= 0 || circularity_ws(k) > 2 || ...
+            ~isfinite(solidity_ws(k)) || ~isfinite(convexity_ws(k))
+        skip_reason_nn{k} = 'invalid watershed shape metrics';
+        continue;
+    end
     valid_flag_ws(k)         = true;
 end
 n_valid_nn = sum(valid_flag_nn);
@@ -312,7 +339,7 @@ fprintf('\n  --- Preferred reporting summary (Method B, n=%d) ---\n', sum(prefer
 fprintf('  NN radius used              : %.1f +/- %.1f px  (%.2f +/- %.2f um)\n', ...
     mean(preferred_nn_radius_v), std(preferred_nn_radius_v), ...
     mean(preferred_nn_radius_v) * xy, std(preferred_nn_radius_v) * xy);
-fprintf('  Peak Z (above scan floor)   : %.2f +/- %.2f um\n', mean(preferred_peak_v), std(preferred_peak_v));
+fprintf('  Peak Z (watershed max)      : %.2f +/- %.2f um\n', mean(preferred_peak_v), std(preferred_peak_v));
 fprintf('  Valley Z (NN circle)        : %.2f +/- %.2f um\n', mean(preferred_valley_v), std(preferred_valley_v));
 fprintf('  Roughness span (Method B)   : %.2f +/- %.2f um\n', mean(preferred_height_b_v), std(preferred_height_b_v));
 fprintf('  Rp per mound (above plane)  : %.2f +/- %.2f um\n', mean(preferred_rp_v), std(preferred_rp_v));
@@ -331,7 +358,7 @@ if n_bc_both > 0
     fprintf('  Mound height (Method C)     : %.2f +/- %.2f um\n', mean(preferred_height_c_v), std(preferred_height_c_v));
     fprintf('  Watershed peak Z            : %.2f +/- %.2f um\n', ...
         mean(watershed_peak_z_um(preferred_valid_flag), 'omitnan'), std(watershed_peak_z_um(preferred_valid_flag), 'omitnan'));
-    fprintf('  Rp - watershed-peak Rp      : %.2f +/- %.2f um\n', ...
+    fprintf('  Centroid-window Rp - watershed-peak Rp : %.2f +/- %.2f um\n', ...
         mean(Rp_vs_watershed_peak_diff_um(preferred_valid_flag), 'omitnan'), std(Rp_vs_watershed_peak_diff_um(preferred_valid_flag), 'omitnan'));
     fprintf('  Paired difference (C-B Rv)  : %.2f +/- %.2f um  (n=%d paired)\n', ...
         mean(Rv_c_per_mound(bc_both_valid) - Rv_nn_per_mound(bc_both_valid)), ...
@@ -361,8 +388,8 @@ xlsx_path = fullfile(outputDir, [imageName '_mound_shapes.xlsx']);
 mound_table = table( ...
     (1:n_total)', ...
     centroids(:,1), centroids(:,2), centroids(:,1) * xy, centroids(:,2) * xy, ...
-    peak_z_um, watershed_peak_z_um, watershed_peak_rowcol_px(:,2), watershed_peak_rowcol_px(:,1), ...
-    watershed_peak_Rp_um, Rp_vs_watershed_peak_diff_um, ...
+    peak_z_um, centroid_peak_z_um, watershed_peak_z_um, watershed_peak_rowcol_px(:,2), watershed_peak_rowcol_px(:,1), ...
+    Rp_per_mound, centroid_peak_Rp_um, watershed_peak_Rp_um, Rp_vs_watershed_peak_diff_um, ...
     nn_radius_px, nn_radius_px * xy, ...
     valley_z_nn_um, mound_height_nn_um, Rv_nn_per_mound, Rz_b_per_mound, double(valid_flag_nn), ...
     valley_z_c_um, mound_base_position_um, mound_height_c_um, Rv_c_per_mound, Rz_c_per_mound, double(valid_flag_c), ...
@@ -371,8 +398,8 @@ mound_table = table( ...
     feret_max_ws_um, feret_min_ws_um, feret_aspect_ratio_ws, feret_orientation_ws_deg, double(valid_flag_ws), ...
     'VariableNames', { ...
         'MoundIndex', 'X_px', 'Y_px', 'X_um', 'Y_um', ...
-        'PeakZ_um', 'WatershedPeakZ_um', 'WatershedPeakX_px', 'WatershedPeakY_px', ...
-        'WatershedPeakRp_um', 'RpMinusWatershedPeakRp_um', ...
+        'PeakZ_um', 'CentroidPeakZ_um', 'WatershedPeakZ_um', 'WatershedPeakX_px', 'WatershedPeakY_px', ...
+        'Rp_um', 'CentroidPeakRp_um', 'WatershedPeakRp_um', 'CentroidPeakRpMinusWatershedPeakRp_um', ...
         'NNradius_px', 'NNradius_um', ...
         'ValleyZ_B_um', 'MoundHeight_B_um', 'Rv_B_um', 'Rz_B_um', 'Valid_B', ...
         'BaseZ_C_um', 'BasePosition_C_um', 'MoundHeight_C_um', 'Rv_C_um', 'Rz_C_um', 'Valid_C', ...
@@ -438,6 +465,8 @@ moundResults.n_valid_nn       = n_valid_nn;
 moundResults.n_valid_c        = n_valid_c;
 moundResults.n_total          = n_total;
 moundResults.peak_z_um        = peak_z_um;
+moundResults.centroid_peak_z_um = centroid_peak_z_um;
+moundResults.centroid_peak_Rp_um = centroid_peak_Rp_um;
 moundResults.Rp_per_mound     = Rp_per_mound;
 moundResults.watershed_peak_z_um = watershed_peak_z_um;
 moundResults.watershed_peak_rowcol_px = watershed_peak_rowcol_px;
@@ -535,6 +564,11 @@ moundResults.Z_smooth         = Z_smooth;
 moundResults.watershed_L      = watershed_L;
 moundResults.watershed_seed_centroids_px = watershed_seed_centroids;
 moundResults.added_edge_seed_centroids_px = added_edge_seed_centroids;
+moundResults.watershed_smooth_sigma_px = smooth_sigma;
+moundResults.watershed_spacing_px = spacing_px;
+moundResults.watershed_sigma_candidates_px = watershed_selection.candidate_sigmas_px;
+moundResults.watershed_sigma_scores = watershed_selection.candidate_scores;
+moundResults.watershed_sigma_metrics = watershed_selection.metrics;
 moundResults.imageName        = imageName;
 moundResults.imagePath        = m1.imagePath;
 moundResults.m1               = m1;
@@ -665,9 +699,18 @@ if isempty(B) || size(B{1},1) < 2
     fmax_um = NaN; fmin_um = NaN; orient_deg = NaN; aspect_ratio = NaN; convex_perimeter_um = NaN;
     return;
 end
-pts = [B{1}(:,2), B{1}(:,1)];
-K = convhull(pts(:,1), pts(:,2));
-hull = pts(K, :);
+pts = unique([B{1}(:,2), B{1}(:,1)], 'rows', 'stable');
+if size(pts, 1) < 2
+    fmax_um = NaN; fmin_um = NaN; orient_deg = NaN; aspect_ratio = NaN; convex_perimeter_um = NaN;
+    return;
+end
+
+if size(pts, 1) >= 3 && pointSetSpansArea(pts)
+    K = convhull(pts(:,1), pts(:,2));
+    hull = pts(K, :);
+else
+    hull = pts;
+end
 
 pair_d = squareform(pdist(hull));
 [fmax_px, idx] = max(pair_d(:));
@@ -675,26 +718,41 @@ pair_d = squareform(pdist(hull));
 vec = hull(i2,:) - hull(i1,:);
 orient_deg = mod(atan2d(vec(2), vec(1)), 180);
 
-widths = nan(size(hull,1)-1, 1);
-for i = 1:size(hull,1)-1
-    edge = hull(i+1,:) - hull(i,:);
-    if norm(edge) < eps
-        continue;
+if size(hull, 1) >= 3 && pointSetSpansArea(hull)
+    widths = nan(size(hull,1)-1, 1);
+    for i = 1:size(hull,1)-1
+        edge = hull(i+1,:) - hull(i,:);
+        if norm(edge) < eps
+            continue;
+        end
+        normal = [-edge(2), edge(1)] / norm(edge);
+        proj = hull * normal';
+        widths(i) = max(proj) - min(proj);
     end
-    normal = [-edge(2), edge(1)] / norm(edge);
-    proj = hull * normal';
-    widths(i) = max(proj) - min(proj);
+    fmin_px = min(widths);
+    seg = diff(hull, 1, 1);
+    convex_perimeter_um = sum(sqrt(sum(seg.^2, 2))) * xy;
+else
+    fmin_px = 1;
+    convex_perimeter_um = fmax_px * xy;
 end
-fmin_px = min(widths);
 if isempty(fmin_px) || ~isfinite(fmin_px) || fmin_px <= 0
-    fmin_px = NaN;
+    fmin_px = 1;
 end
 
-seg = diff(hull, 1, 1);
-convex_perimeter_um = sum(sqrt(sum(seg.^2, 2))) * xy;
 fmax_um = fmax_px * xy;
 fmin_um = fmin_px * xy;
 aspect_ratio = fmax_um / max(fmin_um, eps);
+end
+
+function tf = pointSetSpansArea(pts)
+if size(pts, 1) < 3
+    tf = false;
+    return;
+end
+
+pts0 = pts - mean(pts, 1);
+tf = rank(pts0, 1e-9) >= 2;
 end
 
 function makeMethodCBaseBandDiagnosticFigure(I_rgb, imageName, outputDir, base_band_labels, watershed_border_mask, centroids, watershed_peak_rowcol_px, valid_flag_c)
@@ -842,6 +900,179 @@ sgtitle(fig, sprintf('%s | Diagnostic: edge-inclusive centroid reseeding', image
 outPath = fullfile(outputDir, [imageName '_watershed_augmented_seed_diag.png']);
 exportgraphics(fig, outPath, 'Resolution', 150);
 fprintf('  Saved: %s\n', outPath);
+end
+
+function D_nn = computeNearestNeighborDistances(centroids, fallbackSpacing)
+n_total = size(centroids, 1);
+if n_total <= 1
+    D_nn = repmat(max(1, double(fallbackSpacing)), n_total, 1);
+    return;
+end
+
+dist_matrix = sqrt( ...
+    (centroids(:,1) - centroids(:,1)').^2 + ...
+    (centroids(:,2) - centroids(:,2)').^2);
+dist_matrix(logical(eye(n_total))) = Inf;
+D_nn = min(dist_matrix, [], 2);
+D_nn(~isfinite(D_nn) | D_nn <= 0) = max(1, double(fallbackSpacing));
+end
+
+function spacing_px = computeRepresentativeSpacingPx(D_nn, fallbackSpacing)
+valid = D_nn(isfinite(D_nn) & D_nn > 0);
+if isempty(valid)
+    spacing_px = max(1, double(fallbackSpacing));
+else
+    spacing_px = median(valid);
+end
+
+if ~isfinite(spacing_px) || spacing_px <= 0
+    spacing_px = max(1, double(fallbackSpacing));
+end
+end
+
+function selection = selectWatershedSmoothing(Z_raw, watershed_seed_centroids, original_centroids, spacing_px)
+candidate_sigmas = buildWatershedSigmaCandidates(spacing_px);
+n_candidates = numel(candidate_sigmas);
+candidate_scores = -Inf(n_candidates, 1);
+metrics = repmat(struct( ...
+    'valid_fraction', NaN, ...
+    'median_normalized_clearance', NaN, ...
+    'median_normalized_boundary_drop', NaN, ...
+    'median_circularity', NaN, ...
+    'tiny_region_fraction', NaN, ...
+    'oversized_region_fraction', NaN, ...
+    'median_log_area_error', NaN), n_candidates, 1);
+Z_smooth_all = cell(n_candidates, 1);
+ws_all = cell(n_candidates, 1);
+
+for i = 1:n_candidates
+    sigma = candidate_sigmas(i);
+    Z_try = imgaussfilt(Z_raw, sigma);
+    ws_try = computeSeededWatershedLabels(Z_try, watershed_seed_centroids);
+    [candidate_scores(i), metrics(i)] = scoreSeededWatershed(ws_try, Z_try, original_centroids, spacing_px);
+    Z_smooth_all{i} = Z_try;
+    ws_all{i} = ws_try;
+end
+
+[best_score, best_idx] = max(candidate_scores);
+selection = struct( ...
+    'best_sigma_px', candidate_sigmas(best_idx), ...
+    'best_score', best_score, ...
+    'candidate_sigmas_px', candidate_sigmas(:)', ...
+    'candidate_scores', candidate_scores(:)', ...
+    'metrics', {metrics}, ...
+    'Z_smooth', Z_smooth_all{best_idx}, ...
+    'watershed_L', ws_all{best_idx});
+end
+
+function candidate_sigmas = buildWatershedSigmaCandidates(spacing_px)
+base_sigma = max(0.8, min(12, 0.08 * spacing_px));
+candidate_sigmas = base_sigma * [0.55 0.8 1.0 1.2 1.45];
+candidate_sigmas = min(12, max(0.6, candidate_sigmas));
+candidate_sigmas = unique(round(candidate_sigmas, 2), 'stable');
+end
+
+function [score, metrics] = scoreSeededWatershed(ws_labels, Z_smooth, centroids, spacing_px)
+n_total = size(centroids, 1);
+if n_total == 0
+    score = -Inf;
+    metrics = struct( ...
+        'valid_fraction', 0, ...
+        'median_normalized_clearance', 0, ...
+        'median_normalized_boundary_drop', 0, ...
+        'median_circularity', 0, ...
+        'tiny_region_fraction', 1, ...
+        'oversized_region_fraction', 1, ...
+        'median_log_area_error', Inf);
+    return;
+end
+
+z_scale = prctile(Z_smooth(:), 95) - prctile(Z_smooth(:), 5);
+z_scale = max(z_scale, eps);
+expected_area_px = pi * max(1, 0.5 * spacing_px)^2;
+
+region_area = nan(n_total, 1);
+norm_clearance = nan(n_total, 1);
+norm_boundary_drop = nan(n_total, 1);
+circularity = nan(n_total, 1);
+
+for k = 1:n_total
+    region_mask = (ws_labels == k);
+    if ~any(region_mask(:))
+        continue;
+    end
+
+    region_area(k) = sum(region_mask(:));
+    eq_radius = sqrt(region_area(k) / pi);
+
+    dist_in = bwdist(~region_mask);
+    c = max(1, min(size(ws_labels, 2), round(centroids(k, 1))));
+    r = max(1, min(size(ws_labels, 1), round(centroids(k, 2))));
+    norm_clearance(k) = dist_in(r, c) / max(eq_radius, 1);
+
+    boundary_mask = bwperim(region_mask, 8);
+    boundary_vals = Z_smooth(boundary_mask);
+    region_vals = Z_smooth(region_mask);
+    if ~isempty(boundary_vals) && ~isempty(region_vals)
+        norm_boundary_drop(k) = (max(region_vals) - mean(boundary_vals, 'omitnan')) / z_scale;
+    end
+
+    stats = regionprops(region_mask, 'Area', 'Perimeter');
+    if ~isempty(stats)
+        circularity(k) = 4 * pi * stats.Area / max(stats.Perimeter^2, eps);
+    end
+end
+
+valid = isfinite(region_area) & region_area > 0;
+if ~any(valid)
+    score = -Inf;
+    metrics = struct( ...
+        'valid_fraction', 0, ...
+        'median_normalized_clearance', 0, ...
+        'median_normalized_boundary_drop', 0, ...
+        'median_circularity', 0, ...
+        'tiny_region_fraction', 1, ...
+        'oversized_region_fraction', 1, ...
+        'median_log_area_error', Inf);
+    return;
+end
+
+valid_fraction = mean(valid);
+tiny_region_fraction = mean(region_area(valid) < 0.35 * expected_area_px);
+oversized_region_fraction = mean(region_area(valid) > 3.0 * expected_area_px);
+median_log_area_error = median(abs(log(region_area(valid) / expected_area_px)));
+median_normalized_clearance = median(norm_clearance(valid), 'omitnan');
+median_normalized_boundary_drop = median(norm_boundary_drop(valid), 'omitnan');
+median_circularity = median(circularity(valid), 'omitnan');
+
+median_normalized_clearance = clampFiniteMetric(median_normalized_clearance, 0);
+median_normalized_boundary_drop = clampFiniteMetric(median_normalized_boundary_drop, 0);
+median_circularity = clampFiniteMetric(median_circularity, 0);
+median_log_area_error = clampFiniteMetric(median_log_area_error, 5);
+
+score = ...
+    5.0 * valid_fraction + ...
+    2.5 * median_normalized_clearance + ...
+    1.5 * median_normalized_boundary_drop + ...
+    1.0 * median_circularity - ...
+    1.75 * tiny_region_fraction - ...
+    1.0 * oversized_region_fraction - ...
+    0.75 * median_log_area_error;
+
+metrics = struct( ...
+    'valid_fraction', valid_fraction, ...
+    'median_normalized_clearance', median_normalized_clearance, ...
+    'median_normalized_boundary_drop', median_normalized_boundary_drop, ...
+    'median_circularity', median_circularity, ...
+    'tiny_region_fraction', tiny_region_fraction, ...
+    'oversized_region_fraction', oversized_region_fraction, ...
+    'median_log_area_error', median_log_area_error);
+end
+
+function val = clampFiniteMetric(val, fallbackVal)
+if ~isfinite(val)
+    val = fallbackVal;
+end
 end
 
 function ws_labels = computeSeededWatershedLabels(Z_smooth, centroids)
