@@ -59,9 +59,12 @@ if ~strcmpi(ext, '.vk4')
 end
 
 % --- Check vk4mat is on path ---------------------------------------------
+ensureLocalVk4matOnPath();
 if ~exist('vk4_readVk4Binary', 'file') || ~exist('vk4_computeVk4Offsets', 'file')
+    localHint = fullfile(fileparts(mfilename('fullpath')), 'vk4mat-main');
     error(['readVK4: vk4mat library not found on MATLAB path.\n' ...
-           'Download from https://github.com/matt-black/vk4mat and add to path.']);
+           'Expected bundled copy at: ' localHint '\n' ...
+           'If it is missing, download from https://github.com/matt-black/vk4mat and add to path.']);
 end
 
 % --- Read binary data and compute offset table ---------------------------
@@ -132,4 +135,15 @@ function val = readUint32(bin, byte_offset)
           double(bin(i+1)) * 256    + ...
           double(bin(i+2)) * 65536  + ...
           double(bin(i+3)) * 16777216;
+end
+
+function ensureLocalVk4matOnPath()
+    if exist('vk4_readVk4Binary', 'file') && exist('vk4_computeVk4Offsets', 'file')
+        return;
+    end
+
+    localRoot = fullfile(fileparts(mfilename('fullpath')), 'vk4mat-main');
+    if exist(localRoot, 'dir')
+        addpath(genpath(localRoot));
+    end
 end

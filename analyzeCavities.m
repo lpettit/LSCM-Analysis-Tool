@@ -78,9 +78,8 @@ fprintf('  Height map smoothed (sigma=%d px)\n', smooth_sigma);
 
 % Restrict analysis to the interior of the mound convex hull to avoid
 % image-edge artefacts in both reflection handling and watershed seeding.
-K         = convhull(centroids(:,1), centroids(:,2));
-hull_poly = centroids(K, :);
-hull_mask = poly2mask(hull_poly(:,1), hull_poly(:,2), imgH, imgW);
+[hull_mask, hull_mode] = buildCentroidHullMask(centroids, imgH, imgW, nn_mean_px);
+fprintf('  Analysis mask source: %s\n', hull_mode);
 
 % =========================================================================
 %  STEP 2b: Correct reflection artifacts via median fill (fillDeepPits only)
@@ -839,4 +838,55 @@ end
 if n_remove > 0
     L(ismember(L, remove_labels(1:n_remove))) = 0;
 end
+end
+
+function [mask, mode] = buildCentroidHullMask(centroids, imgH, imgW, padPx)
+pts = unique(centroids, 'rows', 'stable');
+padPx = max(2, ceil(max(1, padPx)));
+
+if isempty(pts)
+    mask = true(imgH, imgW);
+    mode = 'full image fallback (no centroids)';
+    return;
+end
+
+if size(pts, 1) >= 3 && pointSetSpansArea(pts)
+    try
+        K = convhull(pts(:,1), pts(:,2));
+        hull_poly = pts(K, :);
+        mask = poly2mask(hull_poly(:,1), hull_poly(:,2), imgH, imgW);
+        mode = 'convex hull';
+        return;
+    catch
+        % Fall through to padded bounding-box fallback below.
+    end
+end
+
+xMin = max(1, floor(min(pts(:,1)) - padPx));
+xMax = min(imgW, ceil(max(pts(:,1)) + padPx));
+yMin = max(1, floor(min(pts(:,2)) - padPx));
+yMax = min(imgH, ceil(max(pts(:,2)) + padPx));
+
+if xMax <= xMin
+    xMin = max(1, xMin - padPx);
+    xMax = min(imgW, xMax + padPx);
+end
+if yMax <= yMin
+    yMin = max(1, yMin - padPx);
+    yMax = min(imgH, yMax + padPx);
+end
+
+mask = false(imgH, imgW);
+mask(yMin:yMax, xMin:xMax) = true;
+mode = 'padded bounding-box fallback';
+end
+
+function tf = pointSetSpansArea(pts)
+if size(pts, 1) < 3
+    tf = false;
+    return;
+end
+
+pts0 = pts - mean(pts, 1);
+tf = rank(pts0, 1e-9) >= 2;
 end
