@@ -1,5 +1,116 @@
 # Session Notes - 2026-05-02
 
+## Continuation - 2026-05-04
+
+### Branch and session setup
+- Created and worked on branch:
+  - `analyzeMoundShape-2026-05-04`
+
+### 2026-05-04 Module 3 lift-out and centroid visualization work
+- Removed the redundant watershed footprint diagnostic figure because the edge-inclusive centroid reseeding diagnostic already conveyed the needed watershed partition context.
+- Added a new raw-height 3D mound lift-out diagnostic figure to `analyzeMoundShape.m`:
+  - `*_mound_liftout_diag.png`
+- The lift-out figure now shows a small representative subset of mounds with:
+  - the watershed-bounded raw-height surface
+  - the original `analyzeMounds` centroid marker
+  - the watershed peak marker
+  - a 3D mass-centroid marker
+  - a vertical centroid axis through the mound
+- The lift-out crop was tightened so each panel shows only the watershed-contained mound region rather than a larger padded bounding box.
+
+### 2026-05-04 3D mass centroid outputs
+- Added a new per-mound mass-centroid calculation inside the watershed-bounded mound region.
+- Current interpretation:
+  - each mound is treated as a set of equal-density vertical columns above the chosen Method C base reference
+  - the centroid is therefore a 3D centroid of mound volume rather than just a 2D plan-view centroid
+- New outputs added to `moundResults` and the per-mound Excel sheet:
+  - `mass_centroid_x_px`
+  - `mass_centroid_y_px`
+  - `mass_centroid_z_um`
+  - `mass_centroid_x_um`
+  - `mass_centroid_y_um`
+  - `mass_centroid_valid_flag`
+  - `centroid_axis_base_z_um`
+  - `centroid_axis_top_z_um`
+  - `watershed_region_boxes`
+  - `liftout_mound_indices`
+
+### 2026-05-04 base-height interpretation shift
+- The session moved away from assuming one scalar mound base height is always physically representative.
+- Key user clarification:
+  - the issue is not just deep corner artifacts or high saddles by themselves
+  - the issue is that both high and low local base regions can be real around the same mound, so a single average base can collapse physically distinct open-side and crowded-side behavior into one number
+- Working interpretation chosen for next-stage reporting:
+  - `open-side height`
+  - `typical height`
+  - `crowded-side height`
+- These are all defined as peak-above-local-base quantities rather than trying to force one universal mound base definition.
+
+### 2026-05-04 percentile-based base definitions
+- Started with quartile-style base definitions from the Method C per-step base samples, then revised to stronger separation.
+- Final state at end of session:
+  - `Q10` base for open-side reference
+  - `Q50` base for typical reference
+  - `Q90` base for crowded-side reference
+- New saved/exported outputs now include:
+  - `base_q10_z_um`
+  - `base_q50_z_um`
+  - `base_q90_z_um`
+  - `base_q10_position_um`
+  - `base_q50_position_um`
+  - `base_q90_position_um`
+  - `height_open_um`
+  - `height_typical_um`
+  - `height_crowded_um`
+- Per-mound Excel columns now include:
+  - `BaseQ10Z_um`
+  - `BaseQ50Z_um`
+  - `BaseQ90Z_um`
+  - `BaseQ10Position_um`
+  - `BaseQ50Position_um`
+  - `BaseQ90Position_um`
+  - `HeightOpen_um`
+  - `HeightTypical_um`
+  - `HeightCrowded_um`
+
+### 2026-05-04 percentile planes added to lift-outs
+- The 3D lift-out figure now overlays horizontal planes at:
+  - `Q10`
+  - `Q50`
+  - `Q90`
+- Purpose:
+  - visually compare open-side, typical, and crowded-side base interpretations on the same mound surface
+  - make it easier to judge whether the percentile definitions track the user’s physical intuition
+
+### 2026-05-04 cleaned percentile-border sample path
+- The percentile-based base analysis was refined so it does not blindly use every raw watershed border step.
+- Current flow:
+  - first compute the existing Method C two-pixel per-step minimum samples
+  - then prune 1-pixel watershed-border spurs for the percentile-analysis sample set
+  - then compute the `Q10/Q50/Q90` base metrics from the cleaned percentile sample set
+  - if pruning leaves too few samples, fall back to the original unpruned sample set
+- New diagnostic/provenance outputs added:
+  - `method_c_base_samples_um`
+  - `method_c_base_samples_percentile_um`
+  - `method_c_clean_boundary_mask`
+
+### 2026-05-04 open issue: 1-pixel spur strings still visible on mound 2 lift-out
+- The intended cleanup of dangling 1-pixel watershed-border strings was only partially successful.
+- Multiple cleanup attempts were made:
+  - spur pruning on the percentile-analysis boundary sample set
+  - forcing the lift-out border overlay to use the cleaned boundary mask instead of a fresh raw `bwperim` call
+  - tightening watershed-border membership from 8-neighbor to 4-neighbor contact
+- End-of-session status:
+  - the black 1-pixel spur string is still reported as visible on mound 2 in the 3D lift-out
+  - the issue is therefore not considered solved yet
+- Best next debugging step:
+  - inspect mound 2’s exact local watershed/border mask and likely replace the current “clean the border mask” approach with tracing a single closed perimeter for the mound region
+
+### 2026-05-04 code health
+- MATLAB Code Analyzer was run repeatedly after each major edit to `analyzeMoundShape.m`.
+- End-of-session state:
+  - analyzer clean with no current reported issues in `analyzeMoundShape.m`
+
 ## Continuation - 2026-05-03
 
 ### MATLAB recovery completed

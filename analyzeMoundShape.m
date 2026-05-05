@@ -108,6 +108,15 @@ mound_base_position_um = nan(n_total, 1);
 mound_height_c_um    = nan(n_total, 1);
 Rv_c_per_mound       = nan(n_total, 1);
 Rz_c_per_mound       = nan(n_total, 1);
+base_q10_z_um        = nan(n_total, 1);
+base_q50_z_um        = nan(n_total, 1);
+base_q90_z_um        = nan(n_total, 1);
+base_q10_position_um = nan(n_total, 1);
+base_q50_position_um = nan(n_total, 1);
+base_q90_position_um = nan(n_total, 1);
+height_open_um       = nan(n_total, 1);
+height_typical_um    = nan(n_total, 1);
+height_crowded_um    = nan(n_total, 1);
 valid_flag_c         = false(n_total, 1);
 skip_reason_c        = repmat({''}, n_total, 1);
 
@@ -127,13 +136,23 @@ feret_min_ws_um          = nan(n_total, 1);
 feret_aspect_ratio_ws    = nan(n_total, 1);
 feret_orientation_ws_deg = nan(n_total, 1);
 valid_flag_ws            = false(n_total, 1);
+mass_centroid_x_px      = nan(n_total, 1);
+mass_centroid_y_px      = nan(n_total, 1);
+mass_centroid_z_um      = nan(n_total, 1);
+mass_centroid_valid_flag = false(n_total, 1);
+centroid_axis_base_z_um = nan(n_total, 1);
+centroid_axis_top_z_um  = nan(n_total, 1);
 
 circle_mask_store    = cell(n_total, 1);
 base_band_store      = cell(n_total, 1);
+clean_boundary_store = cell(n_total, 1);
+base_samples_store   = cell(n_total, 1);
+base_samples_percentile_store = cell(n_total, 1);
 footprint_mask_store = cell(n_total, 1);
 crop_boxes           = nan(n_total, 4);
 valley_px_b          = nan(n_total, 2);
 boundary_band_boxes  = nan(n_total, 4);
+watershed_region_boxes = nan(n_total, 4);
 base_band_label_img  = zeros(imgH, imgW);
 watershed_border_mask_img = false(imgH, imgW);
 
@@ -188,13 +207,17 @@ for k = 1:n_total
     r1_c = max(1, min(rows_k) - 1); r2_c = min(imgH, max(rows_k) + 1);
     c1_c = max(1, min(cols_k) - 1); c2_c = min(imgW, max(cols_k) + 1);
     boundary_band_boxes(k, :) = [r1_c r2_c c1_c c2_c];
+    watershed_region_boxes(k, :) = [r1_c r2_c c1_c c2_c];
     watershed_loc_c = watershed_L(r1_c:r2_c, c1_c:c2_c);
     region_c = (watershed_loc_c == k);
     boundary_c = getRegionWatershedBorderMask(watershed_loc_c, k);
     watershed_border_mask_img(r1_c:r2_c, c1_c:c2_c) = watershed_border_mask_img(r1_c:r2_c, c1_c:c2_c) | boundary_c;
     centroid_loc_xy = [cx - c1_c + 1, cy - r1_c + 1];
-    [base_band_mask, base_samples_um] = buildMethodCBaseBand(region_c, boundary_c, Z_raw(r1_c:r2_c, c1_c:c2_c), centroid_loc_xy);
+    [base_band_mask, clean_boundary_mask, base_samples_um, base_samples_percentile_um] = buildMethodCBaseBand(region_c, boundary_c, Z_raw(r1_c:r2_c, c1_c:c2_c), centroid_loc_xy);
     base_band_store{k} = base_band_mask;
+    clean_boundary_store{k} = clean_boundary_mask;
+    base_samples_store{k} = base_samples_um;
+    base_samples_percentile_store{k} = base_samples_percentile_um;
     [watershed_peak_z_um(k), watershed_peak_rowcol_px(k, :)] = findRegionPeakPixel(region_c, Z_raw(r1_c:r2_c, c1_c:c2_c), r1_c, c1_c);
     watershed_peak_Rp_um(k) = watershed_peak_z_um(k) - refPlane_um;
     peak_z_um(k) = watershed_peak_z_um(k);
@@ -220,13 +243,43 @@ for k = 1:n_total
         skip_reason_c{k} = sprintf('too few base-band samples (%d)', numel(base_samples_um));
     else
         valley_z_c_um(k) = mean(base_samples_um, 'omitnan');
+        if numel(base_samples_percentile_um) >= 5
+            percentile_samples_um = base_samples_percentile_um;
+        else
+            percentile_samples_um = base_samples_um;
+        end
+        base_q10_z_um(k) = prctile(percentile_samples_um, 10);
+        base_q50_z_um(k) = prctile(percentile_samples_um, 50);
+        base_q90_z_um(k) = prctile(percentile_samples_um, 90);
         mound_base_position_um(k) = refPlane_um - valley_z_c_um(k);
+        base_q10_position_um(k) = refPlane_um - base_q10_z_um(k);
+        base_q50_position_um(k) = refPlane_um - base_q50_z_um(k);
+        base_q90_position_um(k) = refPlane_um - base_q90_z_um(k);
         mound_height_c_um(k) = watershed_peak_Rp_um(k) + mound_base_position_um(k);
+        height_open_um(k) = watershed_peak_z_um(k) - base_q10_z_um(k);
+        height_typical_um(k) = watershed_peak_z_um(k) - base_q50_z_um(k);
+        height_crowded_um(k) = watershed_peak_z_um(k) - base_q90_z_um(k);
         if mound_height_c_um(k) > 0 && isfinite(valley_z_c_um(k))
             Rv_c_per_mound(k) = mound_base_position_um(k);
             Rz_c_per_mound(k) = watershed_peak_Rp_um(k) + Rv_c_per_mound(k);
             valid_flag_c(k) = true;
             base_band_label_img(r1_c:r2_c, c1_c:c2_c) = max(base_band_label_img(r1_c:r2_c, c1_c:c2_c), double(base_band_mask) * k);
+
+            % Treat each mound as a stack of equal-density vertical columns
+            % above its Method C base to estimate the 3D mass centroid.
+            height_above_base_um = max(Z_raw(r1_c:r2_c, c1_c:c2_c) - valley_z_c_um(k), 0);
+            height_above_base_um(~region_c) = 0;
+            total_column_mass = sum(height_above_base_um(:));
+            if total_column_mass > 0
+                X_region = X_full(r1_c:r2_c, c1_c:c2_c);
+                Y_region = Y_full(r1_c:r2_c, c1_c:c2_c);
+                mass_centroid_x_px(k) = sum(X_region(:) .* height_above_base_um(:)) / total_column_mass;
+                mass_centroid_y_px(k) = sum(Y_region(:) .* height_above_base_um(:)) / total_column_mass;
+                mass_centroid_z_um(k) = valley_z_c_um(k) + 0.5 * sum(height_above_base_um(:).^2) / total_column_mass;
+                mass_centroid_valid_flag(k) = true;
+                centroid_axis_base_z_um(k) = valley_z_c_um(k);
+                centroid_axis_top_z_um(k) = watershed_peak_z_um(k);
+            end
         else
             skip_reason_c{k} = 'Method C base estimate not below peak';
         end
@@ -366,13 +419,17 @@ if n_bc_both > 0
 end
 
 fprintf('  Generating figures...\n');
-makeWatershedDiagnosticFigure(I_rgb, imageName, outputDir, centroids, watershed_L, preferred_valid_flag, added_edge_seed_centroids);
 makeAugmentedSeedDiagnosticFigure(m1, I_rgb, imageName, outputDir, centroids, Z_smooth, preferred_valid_flag);
 makeMethodCBaseBandDiagnosticFigure(I_rgb, imageName, outputDir, base_band_label_img, watershed_border_mask_img, ...
     centroids, watershed_peak_rowcol_px, valid_flag_c);
 makeMethodBCComparisonFigure(I_rgb, centroids, preferred_valid_flag, circle_mask_store, base_band_store, ...
     crop_boxes, boundary_band_boxes, valley_px_b, imageName, outputDir, Rv_nn_per_mound, Rv_c_per_mound, ...
     bc_both_valid, nn_radius_px, xy, preferred_height_b_v, preferred_height_c_v, n_valid_nn, n_valid_c);
+makeMoundLiftoutFigure(Z_raw, imageName, outputDir, xy, centroids, centroid_peak_z_um, ...
+    watershed_peak_rowcol_px, watershed_peak_z_um, watershed_L, watershed_region_boxes, clean_boundary_store, ...
+    valid_flag_c, preferred_valid_flag, mass_centroid_x_px, mass_centroid_y_px, mass_centroid_z_um, ...
+    mass_centroid_valid_flag, centroid_axis_base_z_um, centroid_axis_top_z_um, ...
+    base_q10_z_um, base_q50_z_um, base_q90_z_um);
 makeShapeOverlayFigure(I_rgb, imageName, outputDir, centroids, preferred_valid_flag, ...
     preferred_cx_shape_v, preferred_cy_shape_v, preferred_diam_shape_v, preferred_height_c_v, preferred_ar_shape_v, xy);
 makeMorphologyHistFigure(imageName, outputDir, preferred_peak_v, preferred_valley_v, ...
@@ -393,6 +450,11 @@ mound_table = table( ...
     nn_radius_px, nn_radius_px * xy, ...
     valley_z_nn_um, mound_height_nn_um, Rv_nn_per_mound, Rz_b_per_mound, double(valid_flag_nn), ...
     valley_z_c_um, mound_base_position_um, mound_height_c_um, Rv_c_per_mound, Rz_c_per_mound, double(valid_flag_c), ...
+    base_q10_z_um, base_q50_z_um, base_q90_z_um, ...
+    base_q10_position_um, base_q50_position_um, base_q90_position_um, ...
+    height_open_um, height_typical_um, height_crowded_um, ...
+    mass_centroid_x_px, mass_centroid_y_px, mass_centroid_x_px * xy, mass_centroid_y_px * xy, ...
+    mass_centroid_z_um, centroid_axis_base_z_um, centroid_axis_top_z_um, double(mass_centroid_valid_flag), ...
     footprint_ws_um2, equiv_diam_ws_um, aspect_ratio_ws, perimeter_ws_um, circularity_ws, solidity_ws, convexity_ws, ...
     convex_area_ratio_ws, extent_ws, major_axis_ws_um, minor_axis_ws_um, ...
     feret_max_ws_um, feret_min_ws_um, feret_aspect_ratio_ws, feret_orientation_ws_deg, double(valid_flag_ws), ...
@@ -403,6 +465,11 @@ mound_table = table( ...
         'NNradius_px', 'NNradius_um', ...
         'ValleyZ_B_um', 'MoundHeight_B_um', 'Rv_B_um', 'Rz_B_um', 'Valid_B', ...
         'BaseZ_C_um', 'BasePosition_C_um', 'MoundHeight_C_um', 'Rv_C_um', 'Rz_C_um', 'Valid_C', ...
+        'BaseQ10Z_um', 'BaseQ50Z_um', 'BaseQ90Z_um', ...
+        'BaseQ10Position_um', 'BaseQ50Position_um', 'BaseQ90Position_um', ...
+        'HeightOpen_um', 'HeightTypical_um', 'HeightCrowded_um', ...
+        'MassCentroidX_px', 'MassCentroidY_px', 'MassCentroidX_um', 'MassCentroidY_um', ...
+        'MassCentroidZ_um', 'CentroidAxisBaseZ_um', 'CentroidAxisTopZ_um', 'Valid_MassCentroid', ...
         'FootprintArea_um2', 'EquivDiameter_um', 'AspectRatio', 'Perimeter_um', ...
         'Circularity', 'Solidity', 'Convexity', 'ConvexAreaRatio', 'Extent', ...
         'MajorAxis_um', 'MinorAxis_um', ...
@@ -539,6 +606,24 @@ moundResults.method_c_base_band_label_img = base_band_label_img;
 moundResults.method_c_watershed_border_mask = watershed_border_mask_img;
 moundResults.method_c_Rv_per_mound = Rv_c_per_mound;
 moundResults.method_c_Rz_per_mound = Rz_c_per_mound;
+moundResults.base_q10_z_um = base_q10_z_um;
+moundResults.base_q50_z_um = base_q50_z_um;
+moundResults.base_q90_z_um = base_q90_z_um;
+moundResults.base_q10_position_um = base_q10_position_um;
+moundResults.base_q50_position_um = base_q50_position_um;
+moundResults.base_q90_position_um = base_q90_position_um;
+moundResults.height_open_um = height_open_um;
+moundResults.height_typical_um = height_typical_um;
+moundResults.height_crowded_um = height_crowded_um;
+moundResults.mass_centroid_x_px = mass_centroid_x_px;
+moundResults.mass_centroid_y_px = mass_centroid_y_px;
+moundResults.mass_centroid_z_um = mass_centroid_z_um;
+moundResults.mass_centroid_x_um = mass_centroid_x_px * xy;
+moundResults.mass_centroid_y_um = mass_centroid_y_px * xy;
+moundResults.mass_centroid_valid_flag = mass_centroid_valid_flag;
+moundResults.centroid_axis_base_z_um = centroid_axis_base_z_um;
+moundResults.centroid_axis_top_z_um = centroid_axis_top_z_um;
+moundResults.watershed_region_boxes = watershed_region_boxes;
 moundResults.preferred_n_mounds = sum(preferred_valid_flag);
 moundResults.preferred_footprint_um2 = footprint_ws_um2;
 moundResults.preferred_equiv_diam_um = equiv_diam_ws_um;
@@ -569,6 +654,10 @@ moundResults.watershed_spacing_px = spacing_px;
 moundResults.watershed_sigma_candidates_px = watershed_selection.candidate_sigmas_px;
 moundResults.watershed_sigma_scores = watershed_selection.candidate_scores;
 moundResults.watershed_sigma_metrics = watershed_selection.metrics;
+moundResults.liftout_mound_indices = selectMoundLiftoutIndices(preferred_valid_flag & valid_flag_c & mass_centroid_valid_flag, 5);
+moundResults.method_c_base_samples_um = base_samples_store;
+moundResults.method_c_base_samples_percentile_um = base_samples_percentile_store;
+moundResults.method_c_clean_boundary_mask = clean_boundary_store;
 moundResults.imageName        = imageName;
 moundResults.imagePath        = m1.imagePath;
 moundResults.m1               = m1;
@@ -599,9 +688,11 @@ lin_idx = find(region_mask);
 peak_rowcol_global = [rr + r0 - 1, cc + c0 - 1];
 end
 
-function [base_band_mask, base_samples_um] = buildMethodCBaseBand(region_mask, boundary_mask, Z_local_raw, centroid_xy)
+function [base_band_mask, clean_boundary_mask, base_samples_um, percentile_samples_um] = buildMethodCBaseBand(region_mask, boundary_mask, Z_local_raw, centroid_xy)
 base_band_mask = false(size(region_mask));
+clean_boundary_mask = false(size(region_mask));
 base_samples_um = zeros(0, 1);
+percentile_samples_um = zeros(0, 1);
 
 if ~any(boundary_mask(:))
     return;
@@ -609,11 +700,15 @@ end
 
 D_in = bwdist(~region_mask);
 [rb, cb] = find(boundary_mask);
+sample_rows = zeros(numel(rb), 1);
+sample_cols = zeros(numel(rb), 1);
 base_band_mask(boundary_mask) = true;
 
 for i = 1:numel(rb)
     r0 = rb(i);
     c0 = cb(i);
+    sample_rows(i) = r0;
+    sample_cols(i) = c0;
     z_boundary = Z_local_raw(r0, c0);
 
     rr1 = max(1, r0 - 1);
@@ -650,6 +745,22 @@ for i = 1:numel(rb)
         base_samples_um(end+1, 1) = z_boundary; %#ok<AGROW>
     end
 end
+
+clean_boundary_mask = pruneBoundarySpurs(boundary_mask);
+if any(clean_boundary_mask(:))
+    keep_idx = clean_boundary_mask(sub2ind(size(clean_boundary_mask), sample_rows, sample_cols));
+    percentile_samples_um = base_samples_um(keep_idx);
+end
+if numel(percentile_samples_um) < 5
+    percentile_samples_um = base_samples_um;
+end
+end
+
+function clean_boundary_mask = pruneBoundarySpurs(boundary_mask)
+clean_boundary_mask = bwmorph(boundary_mask, 'spur', Inf);
+if ~any(clean_boundary_mask(:))
+    clean_boundary_mask = boundary_mask;
+end
 end
 
 function boundary_mask = getRegionWatershedBorderMask(local_ws_labels, target_label)
@@ -659,7 +770,7 @@ if ~any(region_mask(:))
     return;
 end
 
-adjacent_to_region = imdilate(region_mask, true(3));
+adjacent_to_region = imdilate(region_mask, [0 1 0; 1 1 1; 0 1 0]);
 zero_border = (local_ws_labels == 0) & adjacent_to_region;
 boundary_mask = boundary_mask | zero_border;
 
@@ -810,44 +921,6 @@ exportgraphics(fig, outPath, 'Resolution', 150);
 fprintf('  Saved: %s\n', outPath);
 end
 
-function makeWatershedDiagnosticFigure(I_rgb, imageName, outputDir, centroids, ws_labels, preferred_valid_flag, added_edge_seed_centroids)
-ws_boundary = imdilate(getWatershedBoundaryMask(ws_labels), strel('disk', 1));
-
-fig = figure('Name', 'Watershed diagnostic', 'Position', [40 40 1500 760], 'Color', 'w');
-
-ax1 = subplot(1, 2, 1);
-showBoundaryOverlay(ax1, I_rgb, centroids, preferred_valid_flag, ws_boundary, [0 220 255]);
-if ~isempty(added_edge_seed_centroids)
-    hold(ax1, 'on');
-    plot(ax1, added_edge_seed_centroids(:,1), added_edge_seed_centroids(:,2), 'yo', ...
-        'MarkerSize', 4.5, 'LineWidth', 0.9);
-    hold(ax1, 'off');
-end
-title(ax1, sprintf('Full-image watershed boundaries on raw image (n=%d preferred valid)', ...
-    sum(preferred_valid_flag)), 'FontSize', 10);
-
-ax2 = subplot(1, 2, 2);
-imagesc(ax2, ws_labels);
-axis(ax2, 'image');
-set(ax2, 'YDir', 'normal');
-hold(ax2, 'on');
-plotPartitionCentroids(ax2, centroids, preferred_valid_flag, 'w');
-if ~isempty(added_edge_seed_centroids)
-    plot(ax2, added_edge_seed_centroids(:,1), added_edge_seed_centroids(:,2), 'yo', ...
-        'MarkerSize', 4.5, 'LineWidth', 0.9);
-end
-title(ax2, 'Watershed label map', 'FontSize', 10);
-colormap(ax2, turbo);
-cb = colorbar(ax2);
-cb.Label.String = 'Watershed mound label';
-hold(ax2, 'off');
-
-sgtitle(fig, sprintf('%s | Watershed footprint diagnostic', imageName), 'Interpreter', 'none');
-outPath = fullfile(outputDir, [imageName '_watershed_diag.png']);
-exportgraphics(fig, outPath, 'Resolution', 150);
-fprintf('  Saved: %s\n', outPath);
-end
-
 function makeAugmentedSeedDiagnosticFigure(m1, I_rgb, imageName, outputDir, centroids, Z_smooth, preferred_valid_flag)
 [all_centroids, ok, reason] = detectBorderInclusiveCentroids(m1);
 if ~ok
@@ -900,6 +973,151 @@ sgtitle(fig, sprintf('%s | Diagnostic: edge-inclusive centroid reseeding', image
 outPath = fullfile(outputDir, [imageName '_watershed_augmented_seed_diag.png']);
 exportgraphics(fig, outPath, 'Resolution', 150);
 fprintf('  Saved: %s\n', outPath);
+end
+
+function makeMoundLiftoutFigure(Z_raw, imageName, outputDir, xy, centroids, centroid_peak_z_um, ...
+    watershed_peak_rowcol_px, watershed_peak_z_um, watershed_L, watershed_region_boxes, clean_boundary_store, ...
+    valid_flag_c, preferred_valid_flag, mass_centroid_x_px, mass_centroid_y_px, mass_centroid_z_um, ...
+    mass_centroid_valid_flag, centroid_axis_base_z_um, centroid_axis_top_z_um, ...
+    base_q10_z_um, base_q50_z_um, base_q90_z_um)
+selected_idx = selectMoundLiftoutIndices(preferred_valid_flag & valid_flag_c & mass_centroid_valid_flag, 5);
+if isempty(selected_idx)
+    fprintf('  Skipped mound lift-out diagnostic: no mounds with valid Method C mass centroids.\n');
+    return;
+end
+
+n_show = numel(selected_idx);
+n_cols = min(3, n_show);
+n_rows = ceil(n_show / n_cols);
+fig = figure('Name', 'Mound lift-out diagnostic', 'Position', [70 70 1650 900], 'Color', 'w');
+tlo = tiledlayout(fig, n_rows, n_cols, 'TileSpacing', 'compact', 'Padding', 'compact');
+legend_handles = gobjects(0);
+legend_labels = {'Base Q10 plane', 'Base Q50 plane', 'Base Q90 plane', 'Watershed boundary', 'Initial centroid', 'Mass centroid', 'Centroid axis', 'Watershed peak'};
+
+for i = 1:n_show
+    k = selected_idx(i);
+    box = watershed_region_boxes(k, :);
+    if any(~isfinite(box))
+        continue;
+    end
+
+    r1 = box(1); r2 = box(2);
+    c1 = box(3); c2 = box(4);
+    Z_loc = Z_raw(r1:r2, c1:c2);
+    ws_mask = (watershed_L(r1:r2, c1:c2) == k);
+    if ~any(ws_mask(:))
+        continue;
+    end
+    Z_loc(~ws_mask) = NaN;
+    [X_loc_px, Y_loc_px] = meshgrid(c1:c2, r1:r2);
+    X_loc_um = X_loc_px * xy;
+    Y_loc_um = Y_loc_px * xy;
+    valid_x_um = X_loc_um(ws_mask);
+    valid_y_um = Y_loc_um(ws_mask);
+
+    ax = nexttile(tlo);
+    surf(ax, X_loc_um, Y_loc_um, Z_loc, Z_loc, 'EdgeColor', 'none', 'FaceAlpha', 0.98);
+    hold(ax, 'on');
+    shading(ax, 'interp');
+
+    q10_plane = base_q10_z_um(k) * ones(size(X_loc_um));
+    q50_plane = base_q50_z_um(k) * ones(size(X_loc_um));
+    q90_plane = base_q90_z_um(k) * ones(size(X_loc_um));
+    q10_plane(~ws_mask) = NaN;
+    q50_plane(~ws_mask) = NaN;
+    q90_plane(~ws_mask) = NaN;
+    h_q10_plane = surf(ax, X_loc_um, Y_loc_um, q10_plane, ...
+        'FaceColor', [0.15 0.75 0.85], 'FaceAlpha', 0.16, 'EdgeColor', 'none');
+    h_q50_plane = surf(ax, X_loc_um, Y_loc_um, q50_plane, ...
+        'FaceColor', [0.95 0.80 0.25], 'FaceAlpha', 0.18, 'EdgeColor', 'none');
+    h_q90_plane = surf(ax, X_loc_um, Y_loc_um, q90_plane, ...
+        'FaceColor', [0.92 0.45 0.20], 'FaceAlpha', 0.16, 'EdgeColor', 'none');
+
+    boundary_mask = cleanBoundaryForLiftout(clean_boundary_store{k}, ws_mask);
+    h_boundary = gobjects(1);
+    if any(boundary_mask(:))
+        boundary_z_um = Z_raw(sub2ind(size(Z_raw), Y_loc_px(boundary_mask), X_loc_px(boundary_mask)));
+        h_boundary = plot3(ax, X_loc_um(boundary_mask), Y_loc_um(boundary_mask), boundary_z_um + 0.03, ...
+            'k.', 'MarkerSize', 7);
+    end
+
+    x_init_um = centroids(k, 1) * xy;
+    y_init_um = centroids(k, 2) * xy;
+    z_init_um = centroid_peak_z_um(k);
+    h_init = plot3(ax, x_init_um, y_init_um, z_init_um, 'wo', 'MarkerSize', 7, 'LineWidth', 1.4);
+
+    x_mass_um = mass_centroid_x_px(k) * xy;
+    y_mass_um = mass_centroid_y_px(k) * xy;
+    z_mass_um = mass_centroid_z_um(k);
+    h_mass = plot3(ax, x_mass_um, y_mass_um, z_mass_um, 'rp', 'MarkerSize', 11, ...
+        'MarkerFaceColor', [0.92 0.18 0.18], 'LineWidth', 1.0);
+    h_axis = plot3(ax, [x_mass_um x_mass_um], [y_mass_um y_mass_um], ...
+        [centroid_axis_base_z_um(k) centroid_axis_top_z_um(k)], '-', ...
+        'Color', [0.92 0.18 0.18], 'LineWidth', 1.8);
+
+    h_peak = gobjects(1);
+    if all(isfinite(watershed_peak_rowcol_px(k, :))) && isfinite(watershed_peak_z_um(k))
+        h_peak = plot3(ax, watershed_peak_rowcol_px(k, 2) * xy, watershed_peak_rowcol_px(k, 1) * xy, ...
+            watershed_peak_z_um(k), '^', 'Color', [0.10 0.85 0.25], ...
+            'MarkerFaceColor', [0.10 0.85 0.25], 'MarkerSize', 7, 'LineWidth', 0.9);
+    end
+
+    xlim(ax, [min(valid_x_um) max(valid_x_um)]);
+    ylim(ax, [min(valid_y_um) max(valid_y_um)]);
+    zmin = min(Z_loc(ws_mask), [], 'omitnan');
+    zmax = max(Z_loc(ws_mask), [], 'omitnan');
+    if isfinite(zmin) && isfinite(zmax) && zmax > zmin
+        zlim(ax, [zmin zmax]);
+    end
+    view(ax, 36, 28);
+    grid(ax, 'on');
+    xlabel(ax, 'X (\mum)');
+    ylabel(ax, 'Y (\mum)');
+    zlabel(ax, 'Z (\mum)');
+    title(ax, sprintf('Mound %d | init-centroid to mass-centroid shift = %.2f \\mum', ...
+        k, xy * hypot(mass_centroid_x_px(k) - centroids(k,1), mass_centroid_y_px(k) - centroids(k,2))), ...
+        'FontSize', 10);
+    colormap(ax, turbo);
+    if isempty(legend_handles)
+        legend_handles = [h_q10_plane, h_q50_plane, h_q90_plane, h_boundary, h_init, h_mass, h_axis, h_peak];
+        valid_legend = isgraphics(legend_handles);
+        legend_handles = legend_handles(valid_legend);
+        legend_labels = legend_labels(valid_legend);
+    end
+    hold(ax, 'off');
+end
+
+if ~isempty(legend_handles)
+    legend(legend_handles, legend_labels, 'Location', 'southoutside', 'Orientation', 'horizontal');
+end
+sgtitle(fig, sprintf('%s | Raw-height mound lift-outs with initial and mass centroids', imageName), ...
+    'Interpreter', 'none');
+outPath = fullfile(outputDir, [imageName '_mound_liftout_diag.png']);
+exportgraphics(fig, outPath, 'Resolution', 150);
+fprintf('  Saved: %s\n', outPath);
+end
+
+function boundary_mask = cleanBoundaryForLiftout(clean_boundary_mask, ws_mask)
+if ~isempty(clean_boundary_mask) && isequal(size(clean_boundary_mask), size(ws_mask)) && any(clean_boundary_mask(:))
+    boundary_mask = clean_boundary_mask & ws_mask;
+else
+    boundary_mask = pruneBoundarySpurs(bwperim(ws_mask, 4));
+end
+if ~any(boundary_mask(:))
+    boundary_mask = bwperim(ws_mask, 4);
+end
+end
+
+function selected_idx = selectMoundLiftoutIndices(valid_mask, n_select)
+valid_idx = find(valid_mask);
+if nargin < 2 || isempty(n_select)
+    n_select = 5;
+end
+if isempty(valid_idx)
+    selected_idx = zeros(0, 1);
+    return;
+end
+selected_idx = valid_idx(1:min(n_select, numel(valid_idx)));
 end
 
 function D_nn = computeNearestNeighborDistances(centroids, fallbackSpacing)
@@ -1200,7 +1418,7 @@ for rid = 1:n_basins
     member_idx = find(centroid_basin == rid);
     if isempty(member_idx)
         continue;
-    elseif numel(member_idx) == 1
+    elseif isscalar(member_idx)
         ws_labels(region_mask) = member_idx;
     else
         [rr, cc] = find(region_mask);
@@ -1227,15 +1445,6 @@ if any(~preferred_valid_flag)
         'Color', [0.75 0.15 0.15], 'MarkerSize', 5, 'LineWidth', 0.8);
 end
 hold(ax, 'off');
-end
-
-function plotPartitionCentroids(ax, centroids, preferred_valid_flag, colorSpec)
-plot(ax, centroids(preferred_valid_flag,1), centroids(preferred_valid_flag,2), 'o', ...
-    'Color', colorSpec, 'MarkerSize', 3.5, 'LineWidth', 0.7);
-if any(~preferred_valid_flag)
-    plot(ax, centroids(~preferred_valid_flag,1), centroids(~preferred_valid_flag,2), 'x', ...
-        'Color', colorSpec, 'MarkerSize', 4.0, 'LineWidth', 0.7);
-end
 end
 
 function boundary_mask = getLabelBoundaryMask(labelImage)

@@ -17,6 +17,10 @@
   - For the current VK4 workflow, the reference plane calculation in `analyzeMoundShape.m` has already been verified as correct.
   - Intended cavity depth should use `Z_raw`.
   - Method B should replace Method A as the preferred valley-definition path.
+  - For direct mound-height interpretation, the user now wants peak-above-local-base reporting framed as:
+    - open-side height
+    - typical height
+    - crowded-side height
 
 ## Files Present
 - `readVK4.m`
@@ -58,7 +62,7 @@
 - `analyzeMoundShape.m`
   - Module 3
   - Consumes `m1`
-  - Computes global `Rp/Rv/Rz`, preferred per-mound roughness, raw half-max footprint geometry, Feret diameters, and footprint morphology metrics
+  - Computes global `Rp/Rv/Rz`, preferred per-mound roughness, watershed-restricted mound geometry, 3D lift-out diagnostics, mass centroids, and percentile-based direct mound-height variants
   - Contains both Method A and Method B valley logic; Method B is the intended preferred path
 - `runSOLFAnalysis.m`
   - Single-file orchestration entry point for selected modules
@@ -105,8 +109,9 @@ moundResults  = analyzeMoundShape(m1);
 - The handoff also warns not to change watershed direction, VK4 zeroing convention, or `countBoundaryLoops` behavior casually.
 
 ## Immediate Next Steps
-- Finish aligning `analyzeMoundShape.m` so Method B is treated as the primary reporting path without breaking backward compatibility unnecessarily.
-- Re-test whether the reported `Rz` bug is still present in the current file versions after the raw-footprint rewrite.
+- Resolve the remaining Module 3 watershed-border spur issue still visible on mound 2 in the 3D lift-out diagnostic.
+- Decide whether the current percentile-based direct mound-height family should continue using `Q10/Q50/Q90` or whether a different local-base definition is more physically representative after further visual review.
+- Decide whether the direct mound-height family should become the main public mound-height reporting path, distinct from the roughness-oriented Method B `Rv/Rz` path.
 - Re-test whether `analyzeCavities.m` still reproduces the reflection-correction failure after the seed-order and `Z_raw` depth updates.
 - Continue expanding the app workflow after the single-file launcher/orchestrator baseline.
 
