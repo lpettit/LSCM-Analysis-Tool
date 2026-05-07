@@ -21,6 +21,9 @@
     - open-side height
     - typical height
     - crowded-side height
+  - For Module 3 footprint/body-shape geometry, the preferred footprint definition should use the `Q50`-based half-max plane.
+  - The `Q90`-based half-max footprint was reviewed and rejected as too high.
+  - The raw `Q90`-plane footprint can remain as a comparison/context view, but not as the main footprint measurement.
 
 ## Files Present
 - `readVK4.m`
