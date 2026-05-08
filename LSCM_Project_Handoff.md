@@ -2,13 +2,13 @@
 
 ## Current Status
 - MATLAB prototype for LSCM microstructured boiling-surface analysis.
-- 8 `.m` files are present in the repo.
+- 9 `.m` analysis/workflow files were originally present in the repo; Module 4 has now been added.
 - Current implemented modules:
   - Module 1: mound detection, spacing, density, Delaunay analysis
   - Module 2: cavity geometry analysis
   - Module 3: per-mound shape and roughness analysis
+  - Module 4: spatial order analysis using bond-angle distribution, pair distribution, and planar sixfold order (`psi6`)
 - Planned but not built:
-  - Module 4: bond-angle distribution, pair distribution, Q6
   - Module 5: summary statistics and cross-module correlations
 - Active handoff issues from the uploaded `.docx`:
   - `analyzeCavities.m`: reflection correction reportedly corrects `0` reflections in the current failing case
@@ -34,9 +34,10 @@
 - `analyzeMounds.m`
 - `analyzeCavities.m`
 - `analyzeMoundShape.m`
- - `runSOLFAnalysis.m`
- - `SOLFAnalysisApp.m`
- - `launchSOLFAnalysisApp.m`
+- `analyzeSpatialOrder.m`
+- `runSOLFAnalysis.m`
+- `SOLFAnalysisApp.m`
+- `launchSOLFAnalysisApp.m`
 
 ## Prototype Shape
 - `readVK4.m`
@@ -65,13 +66,18 @@
 - `analyzeMoundShape.m`
   - Module 3
   - Consumes `m1`
-  - Computes global `Rp/Rv/Rz`, preferred per-mound roughness, watershed-restricted mound geometry, 3D lift-out diagnostics, mass centroids, and percentile-based direct mound-height variants
+  - Computes global `Rp/Rv/Rz`, preferred per-mound roughness, watershed-restricted mound geometry, 3D lift-out diagnostics, mass centroids, percentile-based direct mound-height variants, and whole-image height-slice morphology curves
   - Contains both Method A and Method B valley logic; Method B is the intended preferred path
+- `analyzeSpatialOrder.m`
+  - Module 4
+  - Consumes `m1`
+  - Computes trimmed-Delaunay-based coordination number, local/global planar sixfold order (`psi6`), approximate 2D pair distribution `g(r)`, bond-orientation histograms, and lightweight local disorder flags
 - `runSOLFAnalysis.m`
   - Single-file orchestration entry point for selected modules
-  - Calls threshold pickers as needed and then runs the existing analysis functions
+  - Calls threshold pickers as needed and then runs the existing analysis functions, including Module 4
 - `SOLFAnalysisApp.m`
   - First MATLAB single-file app/UI wrapper built on `matlab.apps.AppBase` and `uifigure`
+  - Includes a `Run Module 4` workflow toggle
 - `launchSOLFAnalysisApp.m`
   - Convenience launcher for the app
 
@@ -85,6 +91,7 @@ bestParams    = refineMounds('Left-50x.vk4', true, fillThreshold, 3, 20, bestPar
 m1            = analyzeMounds('Left-50x.vk4', bestParams, true, fillThreshold, 3, 20);
 cavResults    = analyzeCavities(m1, 2.0, true, fillThreshold, reflThreshold);
 moundResults  = analyzeMoundShape(m1);
+spatialOrder  = analyzeSpatialOrder(m1);
 ```
 
 ## Important Dependencies
@@ -115,6 +122,7 @@ moundResults  = analyzeMoundShape(m1);
 - Resolve the remaining Module 3 watershed-border spur issue still visible on mound 2 in the 3D lift-out diagnostic.
 - Decide whether the current percentile-based direct mound-height family should continue using `Q10/Q50/Q90` or whether a different local-base definition is more physically representative after further visual review.
 - Decide whether the direct mound-height family should become the main public mound-height reporting path, distinct from the roughness-oriented Method B `Rv/Rz` path.
+- Review the new whole-image height-slice morphology plots on real surfaces and decide whether the flat low-threshold perimeter tails should be treated purely as interpretation context or suppressed in a future display-only view.
 - Re-test whether `analyzeCavities.m` still reproduces the reflection-correction failure after the seed-order and `Z_raw` depth updates.
 - Continue expanding the app workflow after the single-file launcher/orchestrator baseline.
 

@@ -10,6 +10,19 @@
 - Keep the app/orchestration workflow growing without duplicating analysis logic.
 - Preserve enough diagnostics to validate physical interpretation on difficult surfaces.
 
+## Running Session Notes
+- Added Module 4 `analyzeSpatialOrder.m` and integrated it into the app, runner, smoke test, and output-note docs.
+- Expanded Module 4 diagnostics with Voronoi area/density outputs, neighbor-shell spacing maps, boundary-aware order tiers, and comparison-ready summary labels.
+- Cleaned `analyzeMoundShape.m` warnings, promoted lightweight diagnostic/provenance fields into `moundResults`, and exposed selected QA fields in the Excel workbook.
+- Added whole-image height-slice morphology to Module 3:
+  - cross-sectional area vs height
+  - perimeter vs height
+  - cumulative true 3D surface area vs height
+  - plotting and export on both `z_rel` and a derived `0` to mean preferred `Rz` axis
+- Current interpretation preference for the whole-image slice plots:
+  - use `z_rel` as the main centered physical axis
+  - use the second-row `0` to mean preferred `Rz` view only as a companion framing, not a replacement
+
 ## Footprint and Shape-Definition Planning
 - Decision made:
   - use the half-max plane built from `Q50` as the preferred footprint/body-shape definition for footprint area, circularity, Feret diameters, and related morphology
@@ -100,10 +113,10 @@
 - Keep `runSOLFAnalysis.m` and the app as orchestration layers rather than re-implementing module logic inside the UI path.
 
 ## Broader Project Backlog
-- Build Module 4:
+- Module 4 is now implemented as a spatial-order module built around:
   - bond-angle distribution
   - pair distribution
-  - `Q6`
+  - planar sixfold order (`psi6`), used in place of a less-appropriate 3D-style `Q6`
 - Build Module 5:
   - summary statistics
   - cross-module correlations

@@ -186,7 +186,6 @@ for k = 1:n_total
     crop_boxes(k, :) = [r1 r2 c1 c2];
 
     watershed_loc = watershed_L(r1:r2, c1:c2);
-    Z_loc_raw   = Z_raw(r1:r2, c1:c2);
 
     r_nn_k = D_nn(k);
     nn_radius_px(k) = r_nn_k;
@@ -396,6 +395,11 @@ preferred_cx_shape_v = centroids(preferred_shape_valid_flag, 1);
 preferred_cy_shape_v = centroids(preferred_shape_valid_flag, 2);
 n_valid_c = sum(valid_flag_c);
 n_bc_both = sum(bc_both_valid);
+mean_preferred_rv_um = mean(preferred_rv_v, 'omitnan');
+mean_preferred_rz_um = mean(preferred_rz_v, 'omitnan');
+whole_image_slices = computeWholeImageHeightSliceMetrics( ...
+    Z_raw, surface_area_density_um2, xy, refPlane_um, ...
+    mean_preferred_rv_um, mean_preferred_rz_um);
 
 fprintf('  Valid preferred mounds : %d / %d\n', sum(preferred_valid_flag), n_total);
 fprintf('  Added edge-only watershed seeds : %d\n', size(added_edge_seed_centroids, 1));
@@ -467,6 +471,10 @@ if n_bc_both > 0
 end
 
 fprintf('  Generating figures...\n');
+fprintf('  Whole-image slice morphology: peak perimeter %.2f um at z_rel=%.2f um\n', ...
+    whole_image_slices.peak_perimeter_um, whole_image_slices.z_rel_at_peak_perimeter_um);
+fprintf('  Whole-image slice morphology: half-area height z_rel=%.2f um\n', ...
+    whole_image_slices.z_rel_at_half_area_um);
 makeAugmentedSeedDiagnosticFigure(m1, I_rgb, imageName, outputDir, centroids, Z_smooth, preferred_valid_flag);
 makeMethodCBaseBandDiagnosticFigure(I_rgb, imageName, outputDir, base_band_label_img, watershed_border_mask_img, ...
     centroids, watershed_peak_rowcol_px, valid_flag_c);
@@ -524,6 +532,7 @@ makeCategoryHistogramFigure(imageName, outputDir, 'Surface Area And Volume', 'su
     {'Surface area (um^2)', 'Peak-cap empty volume (um^3)', 'Surface area / volume (1/um)'}, ...
     {'Watershed surface area', 'Empty volume from peak plane', 'Surface area to volume ratio'}, ...
     {[], [], []});
+makeWholeImageHeightSliceFigure(imageName, outputDir, whole_image_slices);
 makeRzDiagFigure(imageName, outputDir, preferred_rp_v, preferred_rv_v, preferred_rz_v, ...
     Z_raw, Z_smooth, refPlane_um, Rp_global, Rv_global, Rz_global, ...
     preferred_cx_v, preferred_cy_v, preferred_peak_v, nn_mean_px, xy);
@@ -549,6 +558,8 @@ mound_table = table( ...
     ellipse_orientation_ws_deg, ellipse_aspect_ratio_ws, orientation_agreement_ws_deg, double(orientation_reliable_ws), ...
     surface_area_ws_um2, peak_cap_volume_ws_um3, surface_area_to_volume_ws_inv_um, ...
     double(valid_flag_ws), ...
+    preferred_valid_flag, ...
+    skip_reason_nn, skip_reason_c, ...
     'VariableNames', { ...
         'MoundIndex', 'X_px', 'Y_px', 'X_um', 'Y_um', ...
         'PeakZ_um', 'CentroidPeakZ_um', 'WatershedPeakZ_um', 'WatershedPeakX_px', 'WatershedPeakY_px', ...
@@ -567,8 +578,18 @@ mound_table = table( ...
         'FeretMax_um', 'FeretMin_um', 'FeretAspectRatio', 'FeretOrientation_deg', ...
         'EllipseOrientation_deg', 'EllipseAxisRatio', 'OrientationAgreement_deg', 'OrientationReliable', ...
         'SurfaceArea_um2', 'PeakCapVolume_um3', 'SurfaceAreaToVolume_inv_um', ...
-        'Valid_Footprint'});
+        'Valid_Footprint', ...
+        'Valid_Preferred', ...
+        'SkipReason_B', 'SkipReason_C'});
 writetable(mound_table, xlsx_path, 'Sheet', 'PerMound');
+
+whole_image_slice_table = table( ...
+    whole_image_slices.z_um(:), whole_image_slices.z_rel_um(:), whole_image_slices.z_rz_um(:), ...
+    whole_image_slices.cross_section_area_um2(:), whole_image_slices.perimeter_um(:), ...
+    whole_image_slices.cumulative_surface_area_um2(:), whole_image_slices.cumulative_surface_area_fraction(:), ...
+    'VariableNames', {'Z_um', 'Zrel_um', 'ZfromRv_um', 'CrossSectionArea_um2', 'Perimeter_um', ...
+    'CumulativeSurfaceArea_um2', 'CumulativeSurfaceAreaFraction'});
+writetable(whole_image_slice_table, xlsx_path, 'Sheet', 'WholeImageSlices');
 
 summary = table( ...
     {imageName}, {'Q50_halfmax_watershed'}, ...
@@ -602,6 +623,14 @@ summary = table( ...
     mean(preferred_surface_area_to_volume_v, 'omitnan'), std(preferred_surface_area_to_volume_v, 'omitnan'), ...
     sum(preferred_orientation_reliable_v), ...
     mean(preferred_orientation_agreement_v, 'omitnan'), std(preferred_orientation_agreement_v, 'omitnan'), ...
+    whole_image_slices.peak_perimeter_um, ...
+    whole_image_slices.z_at_peak_perimeter_um, whole_image_slices.z_rel_at_peak_perimeter_um, ...
+    whole_image_slices.cross_section_area_at_peak_perimeter_um2, ...
+    whole_image_slices.z_at_half_area_um, whole_image_slices.z_rel_at_half_area_um, ...
+    watershed_selection.best_score, ...
+    smooth_sigma, spacing_px, ...
+    size(watershed_seed_centroids, 1), size(added_edge_seed_centroids, 1), ...
+    aug_ok, {aug_reason}, ...
     'VariableNames', { ...
         'ImageName', 'PreferredMethod', ...
         'N_valid_preferred', 'N_valid_C', 'N_invalid_preferred', ...
@@ -632,8 +661,29 @@ summary = table( ...
         'Mean_SurfaceArea_um2', 'Std_SurfaceArea_um2', ...
         'Mean_PeakCapVolume_um3', 'Std_PeakCapVolume_um3', ...
         'Mean_SurfaceAreaToVolume_inv_um', 'Std_SurfaceAreaToVolume_inv_um', ...
-        'N_OrientationReliable', 'Mean_OrientationAgreement_deg', 'Std_OrientationAgreement_deg'});
+        'N_OrientationReliable', 'Mean_OrientationAgreement_deg', 'Std_OrientationAgreement_deg', ...
+        'PeakPerimeter_um', ...
+        'Z_at_PeakPerimeter_um', 'Zrel_at_PeakPerimeter_um', ...
+        'CrossSectionArea_at_PeakPerimeter_um2', ...
+        'Z_at_HalfArea_um', 'Zrel_at_HalfArea_um', ...
+        'WatershedSelectionScore', ...
+        'WatershedSmoothSigma_px', 'WatershedSpacing_px', ...
+        'WatershedSeedCount', 'AddedEdgeSeedCount', ...
+        'AugmentedSeedOK', 'AugmentedSeedReason'});
 writetable(summary, xlsx_path, 'Sheet', 'Summary');
+
+diagnostics = table( ...
+    {'PreferredValidCount'; 'MethodBValidCount'; 'MethodCValidCount'; 'WatershedFootprintValidCount'; ...
+    'AugmentedSeedCount'; 'WatershedSeedCount'; 'WatershedSelectionScore'; 'WatershedSmoothSigma_px'; ...
+    'WatershedSpacing_px'; 'PeakPerimeter_um'; 'Zrel_at_PeakPerimeter_um'; 'Zrel_at_HalfArea_um'; ...
+    'AugmentedSeedOK'; 'AugmentedSeedReason'}, ...
+    [sum(preferred_valid_flag); n_valid_nn; n_valid_c; sum(valid_flag_ws); ...
+    size(added_edge_seed_centroids, 1); size(watershed_seed_centroids, 1); watershed_selection.best_score; smooth_sigma; ...
+    spacing_px; whole_image_slices.peak_perimeter_um; whole_image_slices.z_rel_at_peak_perimeter_um; whole_image_slices.z_rel_at_half_area_um; ...
+    double(aug_ok); NaN], ...
+    {''; ''; ''; ''; ''; ''; ''; ''; ''; ''; ''; ''; ''; aug_reason}, ...
+    'VariableNames', {'Metric', 'NumericValue', 'TextValue'});
+writetable(diagnostics, xlsx_path, 'Sheet', 'Diagnostics');
 fprintf('  Saved: %s\n', xlsx_path);
 
 moundResults.n_mounds         = sum(preferred_valid_flag);
@@ -826,10 +876,38 @@ moundResults.watershed_spacing_px = spacing_px;
 moundResults.watershed_sigma_candidates_px = watershed_selection.candidate_sigmas_px;
 moundResults.watershed_sigma_scores = watershed_selection.candidate_scores;
 moundResults.watershed_sigma_metrics = watershed_selection.metrics;
+moundResults.whole_image_slice_z_um = whole_image_slices.z_um;
+moundResults.whole_image_slice_z_rel_um = whole_image_slices.z_rel_um;
+moundResults.whole_image_slice_z_from_rv_um = whole_image_slices.z_rz_um;
+moundResults.whole_image_cross_section_area_um2 = whole_image_slices.cross_section_area_um2;
+moundResults.whole_image_perimeter_um = whole_image_slices.perimeter_um;
+moundResults.whole_image_cumulative_surface_area_um2 = whole_image_slices.cumulative_surface_area_um2;
+moundResults.whole_image_cumulative_surface_area_fraction = whole_image_slices.cumulative_surface_area_fraction;
+moundResults.whole_image_mean_preferred_rv_um = whole_image_slices.mean_preferred_rv_um;
+moundResults.whole_image_mean_preferred_rz_um = whole_image_slices.mean_preferred_rz_um;
+moundResults.whole_image_rz_span_um = whole_image_slices.rz_span_um;
+moundResults.whole_image_peak_perimeter_um = whole_image_slices.peak_perimeter_um;
+moundResults.whole_image_z_at_peak_perimeter_um = whole_image_slices.z_at_peak_perimeter_um;
+moundResults.whole_image_z_rel_at_peak_perimeter_um = whole_image_slices.z_rel_at_peak_perimeter_um;
+moundResults.whole_image_z_from_rv_at_peak_perimeter_um = whole_image_slices.z_rz_at_peak_perimeter_um;
+moundResults.whole_image_cross_section_area_at_peak_perimeter_um2 = whole_image_slices.cross_section_area_at_peak_perimeter_um2;
+moundResults.whole_image_z_at_half_area_um = whole_image_slices.z_at_half_area_um;
+moundResults.whole_image_z_rel_at_half_area_um = whole_image_slices.z_rel_at_half_area_um;
+moundResults.whole_image_z_from_rv_at_half_area_um = whole_image_slices.z_rz_at_half_area_um;
 moundResults.liftout_mound_indices = selectMoundLiftoutIndices(preferred_valid_flag & valid_flag_c & mass_centroid_valid_flag, 5);
 moundResults.method_c_base_samples_um = base_samples_store;
 moundResults.method_c_base_samples_percentile_um = base_samples_percentile_store;
 moundResults.method_c_clean_boundary_mask = clean_boundary_store;
+moundResults.method_b_skip_reason = skip_reason_nn;
+moundResults.method_c_skip_reason = skip_reason_c;
+moundResults.method_b_circle_mask = circle_mask_store;
+moundResults.method_b_crop_boxes = crop_boxes;
+moundResults.method_c_base_band_mask = base_band_store;
+moundResults.method_c_boundary_band_boxes = boundary_band_boxes;
+moundResults.footprint_mask_q50_halfmax = footprint_mask_store;
+moundResults.augmented_watershed_seed_ok = aug_ok;
+moundResults.augmented_watershed_seed_reason = aug_reason;
+moundResults.watershed_selection_score = watershed_selection.best_score;
 moundResults.imageName        = imageName;
 moundResults.imagePath        = m1.imagePath;
 moundResults.m1               = m1;
@@ -863,6 +941,93 @@ end
 function surface_area_density_um2 = computeSurfaceAreaDensity(Z_raw, xy)
 [dzdy, dzdx] = gradient(Z_raw, xy, xy);
 surface_area_density_um2 = xy^2 * sqrt(1 + dzdx.^2 + dzdy.^2);
+end
+
+function slice_metrics = computeWholeImageHeightSliceMetrics(Z_raw, surface_area_density_um2, xy, refPlane_um, mean_preferred_rv_um, mean_preferred_rz_um)
+valid_mask = isfinite(Z_raw) & isfinite(surface_area_density_um2);
+z_vals = Z_raw(valid_mask);
+surface_area_vals = surface_area_density_um2(valid_mask);
+
+if isempty(z_vals)
+    error('analyzeMoundShape: whole-image height-slice metrics require finite height data.');
+end
+
+z_min = min(z_vals);
+z_max = max(z_vals);
+if z_max <= z_min
+    z_levels = linspace(z_min - 0.05, z_max + 0.05, 61);
+else
+z_levels = linspace(z_min, z_max, 201);
+end
+z_rel_levels = z_levels - refPlane_um;
+z_rz_levels = z_rel_levels + mean_preferred_rv_um;
+
+cross_section_area_um2 = nan(size(z_levels));
+perimeter_um = nan(size(z_levels));
+for i = 1:numel(z_levels)
+    mask_k = valid_mask & (Z_raw >= z_levels(i));
+    cross_section_area_um2(i) = sum(mask_k(:)) * xy^2;
+    stats_k = regionprops(padarray(mask_k, [1 1], 'replicate', 'both'), 'Perimeter');
+    if isempty(stats_k)
+        perimeter_um(i) = 0;
+    else
+        perimeter_um(i) = xy * sum([stats_k.Perimeter]);
+    end
+end
+
+[sorted_z, order] = sort(z_vals(:), 'ascend');
+sorted_surface_area = surface_area_vals(order);
+cum_surface_area_sorted = cumsum(sorted_surface_area);
+cumulative_surface_area_um2 = zeros(size(z_levels));
+for i = 1:numel(z_levels)
+    idx = find(sorted_z <= z_levels(i), 1, 'last');
+    if isempty(idx)
+        cumulative_surface_area_um2(i) = 0;
+    else
+        cumulative_surface_area_um2(i) = cum_surface_area_sorted(idx);
+    end
+end
+
+total_surface_area_um2 = cumulative_surface_area_um2(end);
+cumulative_surface_area_fraction = cumulative_surface_area_um2 / max(total_surface_area_um2, eps);
+cross_section_area_fraction = cross_section_area_um2 / max(cross_section_area_um2(1), eps);
+
+[peak_perimeter_um, idx_peak_perimeter] = max(perimeter_um);
+z_at_peak_perimeter_um = z_levels(idx_peak_perimeter);
+z_rel_at_peak_perimeter_um = z_rel_levels(idx_peak_perimeter);
+z_rz_at_peak_perimeter_um = z_rz_levels(idx_peak_perimeter);
+cross_section_area_at_peak_perimeter_um2 = cross_section_area_um2(idx_peak_perimeter);
+
+idx_half_area = find(cross_section_area_fraction <= 0.5, 1, 'first');
+if isempty(idx_half_area)
+    idx_half_area = numel(z_levels);
+end
+z_at_half_area_um = z_levels(idx_half_area);
+z_rel_at_half_area_um = z_rel_levels(idx_half_area);
+z_rz_at_half_area_um = z_rz_levels(idx_half_area);
+
+slice_metrics = struct( ...
+    'z_um', z_levels(:), ...
+    'z_rel_um', z_rel_levels(:), ...
+    'z_rz_um', z_rz_levels(:), ...
+    'z_min_um', z_min, ...
+    'z_max_um', z_max, ...
+    'mean_preferred_rv_um', mean_preferred_rv_um, ...
+    'mean_preferred_rz_um', mean_preferred_rz_um, ...
+    'rz_span_um', mean_preferred_rz_um, ...
+    'cross_section_area_um2', cross_section_area_um2(:), ...
+    'perimeter_um', perimeter_um(:), ...
+    'cumulative_surface_area_um2', cumulative_surface_area_um2(:), ...
+    'cumulative_surface_area_fraction', cumulative_surface_area_fraction(:), ...
+    'peak_perimeter_um', peak_perimeter_um, ...
+    'z_at_peak_perimeter_um', z_at_peak_perimeter_um, ...
+    'z_rel_at_peak_perimeter_um', z_rel_at_peak_perimeter_um, ...
+    'z_rz_at_peak_perimeter_um', z_rz_at_peak_perimeter_um, ...
+    'cross_section_area_at_peak_perimeter_um2', cross_section_area_at_peak_perimeter_um2, ...
+    'z_at_half_area_um', z_at_half_area_um, ...
+    'z_rel_at_half_area_um', z_rel_at_half_area_um, ...
+    'z_rz_at_half_area_um', z_rz_at_half_area_um, ...
+    'cross_section_area_fraction_curve', cross_section_area_fraction(:));
 end
 
 function weights = computeRegionIntegrationWeights(local_ws_labels, target_label)
@@ -1177,7 +1342,7 @@ overlay(:,:,1) = uint8(aug_boundary) * 255;
 overlay(:,:,2) = uint8(aug_boundary) * 180;
 h = showDiagnosticImage(ax2, overlay);
 h.AlphaData = double(aug_boundary) * 0.82;
-h_centroids = plot(ax2, centroids(:,1), centroids(:,2), 'g+', 'MarkerSize', 5, 'LineWidth', 0.8);
+plot(ax2, centroids(:,1), centroids(:,2), 'g+', 'MarkerSize', 5, 'LineWidth', 0.8);
 h_added = gobjects(1);
 if ~isempty(added_centroids)
     h_added = plot(ax2, added_centroids(:,1), added_centroids(:,2), 'yo', 'MarkerSize', 4.5, 'LineWidth', 0.9);
@@ -1189,8 +1354,8 @@ legend_handles = h_centroids_proxy;
 legend_labels = {'Interior centroids'};
 if any(isgraphics(h_added))
     h_added_proxy = makeLineLegendProxy(ax2, [1 1 0], 'none', 0.9, 'o', 4.5, 'none', [1 1 0]);
-    legend_handles(end+1) = h_added_proxy; %#ok<AGROW>
-    legend_labels{end+1} = 'Added edge centroids'; %#ok<AGROW>
+    legend_handles(end+1) = h_added_proxy;
+    legend_labels{end+1} = 'Added edge centroids';
 end
 legend(ax2, legend_handles, legend_labels, 'Location', 'southoutside');
 hold(ax2, 'off');
@@ -1255,34 +1420,33 @@ for i = 1:n_show
     q50_plane(~ws_mask) = NaN;
     q90_plane(~ws_mask) = NaN;
     hm_q50_plane(~ws_mask) = NaN;
-    h_q10_plane = surf(ax, X_loc_um, Y_loc_um, q10_plane, ...
+    surf(ax, X_loc_um, Y_loc_um, q10_plane, ...
         'FaceColor', [0.15 0.75 0.85], 'FaceAlpha', 0.16, 'EdgeColor', 'none');
-    h_q50_plane = surf(ax, X_loc_um, Y_loc_um, q50_plane, ...
+    surf(ax, X_loc_um, Y_loc_um, q50_plane, ...
         'FaceColor', [0.95 0.80 0.25], 'FaceAlpha', 0.18, 'EdgeColor', 'none');
-    h_q90_plane = surf(ax, X_loc_um, Y_loc_um, q90_plane, ...
+    surf(ax, X_loc_um, Y_loc_um, q90_plane, ...
         'FaceColor', [0.92 0.45 0.20], 'FaceAlpha', 0.16, 'EdgeColor', 'none');
-    h_hm_q50_plane = surf(ax, X_loc_um, Y_loc_um, hm_q50_plane, ...
+    surf(ax, X_loc_um, Y_loc_um, hm_q50_plane, ...
         'FaceColor', [0.25 0.55 0.95], 'FaceAlpha', 0.12, 'EdgeColor', 'none');
 
     boundary_mask = cleanBoundaryForLiftout(clean_boundary_store{k}, ws_mask);
-    h_boundary = gobjects(1);
     if any(boundary_mask(:))
         boundary_z_um = Z_raw(sub2ind(size(Z_raw), Y_loc_px(boundary_mask), X_loc_px(boundary_mask)));
-        h_boundary = plot3(ax, X_loc_um(boundary_mask), Y_loc_um(boundary_mask), boundary_z_um + 0.03, ...
+        plot3(ax, X_loc_um(boundary_mask), Y_loc_um(boundary_mask), boundary_z_um + 0.03, ...
             'k.', 'MarkerSize', 7);
     end
 
     x_init_um = centroids(k, 1) * xy;
     y_init_um = centroids(k, 2) * xy;
     z_init_um = centroid_peak_z_um(k);
-    h_init = plot3(ax, x_init_um, y_init_um, z_init_um, 'wo', 'MarkerSize', 7, 'LineWidth', 1.4);
+    plot3(ax, x_init_um, y_init_um, z_init_um, 'wo', 'MarkerSize', 7, 'LineWidth', 1.4);
 
     x_mass_um = mass_centroid_x_px(k) * xy;
     y_mass_um = mass_centroid_y_px(k) * xy;
     z_mass_um = mass_centroid_z_um(k);
-    h_mass = plot3(ax, x_mass_um, y_mass_um, z_mass_um, 'rp', 'MarkerSize', 11, ...
+    plot3(ax, x_mass_um, y_mass_um, z_mass_um, 'rp', 'MarkerSize', 11, ...
         'MarkerFaceColor', [0.92 0.18 0.18], 'LineWidth', 1.0);
-    h_axis = plot3(ax, [x_mass_um x_mass_um], [y_mass_um y_mass_um], ...
+    plot3(ax, [x_mass_um x_mass_um], [y_mass_um y_mass_um], ...
         [centroid_axis_base_z_um(k) centroid_axis_top_z_um(k)], '-', ...
         'Color', [0.92 0.18 0.18], 'LineWidth', 1.8);
 
@@ -1310,7 +1474,7 @@ for i = 1:n_show
         'FontSize', 10);
     colormap(ax, turbo);
     if isempty(legend_handles)
-        legend_handles = [...
+        base_legend_handles = [...
             makePatchLegendProxy(ax, [0.15 0.75 0.85], 0.16), ...
             makePatchLegendProxy(ax, [0.95 0.80 0.25], 0.18), ...
             makePatchLegendProxy(ax, [0.92 0.45 0.20], 0.16), ...
@@ -1320,8 +1484,9 @@ for i = 1:n_show
             makeLineLegendProxy(ax, [0.92 0.18 0.18], 'none', 1.0, 'p', 11, [0.92 0.18 0.18], [0.92 0.18 0.18]), ...
             makeLineLegendProxy(ax, [0.92 0.18 0.18], '-', 1.8, 'none', 6, 'none', [0.92 0.18 0.18])];
         if any(isgraphics(h_peak))
-            legend_handles(end+1) = makeLineLegendProxy(ax, [0.10 0.85 0.25], 'none', 0.9, '^', 7, [0.10 0.85 0.25], [0.10 0.85 0.25]); %#ok<AGROW>
+            legend_handles = [base_legend_handles, makeLineLegendProxy(ax, [0.10 0.85 0.25], 'none', 0.9, '^', 7, [0.10 0.85 0.25], [0.10 0.85 0.25])];
         else
+            legend_handles = base_legend_handles;
             legend_labels = legend_labels(1:end-1);
         end
     end
@@ -1439,10 +1604,6 @@ else
     valid = isfinite(orient_deg) & orient_deg >= 90;
     orient_deg(valid) = orient_deg(valid) - 180;
 end
-end
-
-function orient_deg = wrapAxisOrientationToSymmetricDeg(raw_deg)
-orient_deg = wrapAxisOrientationDeg(raw_deg);
 end
 
 function diff_deg = axisOrientationDifferenceDeg(a_deg, b_deg)
@@ -1921,13 +2082,13 @@ ax2 = subplot(1, 3, 2);
 if any(both_valid)
     rvA = rv_a(both_valid);
     rvB = rv_b(both_valid);
-    h_scatter = scatter(ax2, rvA, rvB, 30, nn_radius_px(both_valid) * xy, 'filled', 'MarkerFaceAlpha', 0.75);
+    scatter(ax2, rvA, rvB, 30, nn_radius_px(both_valid) * xy, 'filled', 'MarkerFaceAlpha', 0.75);
     hold(ax2, 'on');
     lims = [min([rvA; rvB]), max([rvA; rvB])];
-    h_identity = plot(ax2, lims, lims, 'k--', 'LineWidth', 1.2);
+    plot(ax2, lims, lims, 'k--', 'LineWidth', 1.2);
     pfit = polyfit(rvA, rvB, 1);
     xx = linspace(lims(1), lims(2), 100);
-    h_fit = plot(ax2, xx, polyval(pfit, xx), 'r-', 'LineWidth', 1.2);
+    plot(ax2, xx, polyval(pfit, xx), 'r-', 'LineWidth', 1.2);
     cb = colorbar(ax2);
     cb.Label.String = 'NN radius (µm)';
     xlabel(ax2, 'Rv - Method A (µm)');
@@ -1947,8 +2108,8 @@ end
 ax3 = subplot(1, 3, 3);
 all_heights = [height_a; height_b];
 edges = linspace(min(all_heights) * 0.9, max(all_heights) * 1.05, 31);
-    h_hist_a = histogram(ax3, height_a, edges, 'FaceColor', [0.25 0.55 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.65); hold(ax3, 'on');
-    h_hist_b = histogram(ax3, height_b, edges, 'FaceColor', [0.90 0.50 0.15], 'EdgeColor', 'none', 'FaceAlpha', 0.65);
+    histogram(ax3, height_a, edges, 'FaceColor', [0.25 0.55 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.65); hold(ax3, 'on');
+    histogram(ax3, height_b, edges, 'FaceColor', [0.90 0.50 0.15], 'EdgeColor', 'none', 'FaceAlpha', 0.65);
 xline(ax3, mean(height_a), '-', 'Color', [0.10 0.35 0.75], 'LineWidth', 1.8);
 xline(ax3, mean(height_b), '-', 'Color', [0.75 0.30 0.05], 'LineWidth', 1.8);
 xlabel(ax3, 'Mound height peak-valley (µm)');
@@ -2144,133 +2305,73 @@ text(ax, median_val, yl(1) + 0.04 * yr, sprintf('median = %.3g', median_val), ..
 hold(ax, 'off');
 end
 
-function makeMorphologyHistFigure(imageName, outputDir, peak_v, valley_v, height_v, fp_v, diam_v, ar_v, fmax_v, fmin_v, fratio_v, circ_v, solid_v, convexity_v)
-fig = createDiagnosticFigure('Mound shape distributions', [100 100 1500 900]);
-data = {peak_v, valley_v, height_v, fp_v, diam_v, ar_v, fmax_v, fmin_v, fratio_v, circ_v, solid_v, convexity_v};
-labels = {'Peak Z (µm)', 'Valley Z (µm)', 'Mound height (µm)', 'Footprint area (µm²)', ...
-    'Equiv. diameter (µm)', 'Aspect ratio h/d', 'Feret max (µm)', 'Feret min (µm)', ...
-    'Feret aspect ratio', 'Circularity', 'Solidity', 'Convexity'};
-titles = {'Peak height', 'Preferred valley floor', 'Preferred mound height', 'Q50 half-max footprint area', ...
-    'Equivalent diameter', 'Height-to-diameter ratio', 'Maximum Feret diameter', 'Minimum Feret diameter', ...
-    'Feret aspect ratio', 'Footprint circularity', 'Footprint solidity', 'Footprint convexity'};
-for i = 1:12
-    ax = subplot(3, 4, i);
-    histogram(ax, data{i}, 30, 'FaceColor', [0.25 0.55 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.85);
-    hold(ax, 'on');
-    xline(ax, mean(data{i}), 'r-', 'LineWidth', 1.6, 'Label', sprintf('mean = %.2f', mean(data{i})));
-    xline(ax, median(data{i}), 'k--', 'LineWidth', 1.0, 'Label', sprintf('med = %.2f', median(data{i})));
-    xlabel(ax, labels{i});
-    ylabel(ax, 'Count');
-    title(ax, titles{i});
-    grid(ax, 'on');
-    hold(ax, 'off');
-end
-sgtitle(fig, sprintf('%s | Preferred footprint and roughness distributions', imageName), 'Interpreter', 'none');
-outPath = fullfile(outputDir, [imageName '_mound_hist.png']);
-exportgraphics(fig, outPath, 'Resolution', 150);
-fprintf('  Saved: %s\n', outPath);
-end
+function makeWholeImageHeightSliceFigure(imageName, outputDir, slice_metrics)
+fig = createDiagnosticFigure('Whole-image height-slice morphology', [150 150 1450 860]);
+tlo = tiledlayout(fig, 2, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-function makeOrientationComparisonFigure(imageName, outputDir, feret_orientation_v, ellipse_orientation_v, agreement_v, reliable_flag_v)
-fig = createDiagnosticFigure('Mound orientation comparison', [130 130 1400 620]);
+ax1 = nexttile(tlo);
+plot(ax1, slice_metrics.z_rel_um, slice_metrics.cross_section_area_um2, '-', 'Color', [0.15 0.50 0.85], 'LineWidth', 1.8);
+hold(ax1, 'on');
+xline(ax1, slice_metrics.z_rel_at_half_area_um, '--', 'Color', [0.85 0.25 0.10], 'LineWidth', 1.3);
+yline(ax1, 0.5 * max(slice_metrics.cross_section_area_um2), ':', 'Color', [0.55 0.55 0.55], 'LineWidth', 1.0);
+xlabel(ax1, 'z relative to reference plane (\mum)');
+ylabel(ax1, 'Cross-sectional area (\mum^2)');
+title(ax1, sprintf('Area vs z_{rel} | half-area at %.2f \\mum', slice_metrics.z_rel_at_half_area_um), 'FontSize', 10);
+grid(ax1, 'on');
+hold(ax1, 'off');
 
-ax1 = subplot(1, 2, 1);
-valid_methods = isfinite(feret_orientation_v) & isfinite(ellipse_orientation_v);
-if ~any(valid_methods)
-    axis(ax1, 'off');
-    text(ax1, 0.5, 0.5, 'No valid orientation data', 'HorizontalAlignment', 'center');
-else
-    feret_plot_deg = wrapAxisOrientationToSymmetricDeg(feret_orientation_v(valid_methods));
-    ellipse_plot_deg = wrapAxisOrientationToSymmetricDeg(ellipse_orientation_v(valid_methods));
-    edges = -90:10:90;
-    histogram(ax1, feret_plot_deg, edges, ...
-        'FaceColor', [0.20 0.55 0.90], 'EdgeColor', 'none', 'FaceAlpha', 0.45);
-    hold(ax1, 'on');
-    histogram(ax1, ellipse_plot_deg, edges, ...
-        'FaceColor', [0.92 0.55 0.18], 'EdgeColor', 'none', 'FaceAlpha', 0.45);
-    xlim(ax1, [-90 90]);
-    xlabel(ax1, 'Orientation angle (deg from +x, stored on [-90,90))');
-    ylabel(ax1, 'Count');
-    title(ax1, 'Feret vs ellipse orientation distributions', 'FontSize', 10);
-    h_feret_proxy = makePatchLegendProxy(ax1, [0.20 0.55 0.90], 0.45);
-    h_ellipse_proxy = makePatchLegendProxy(ax1, [0.92 0.55 0.18], 0.45);
-    legend(ax1, [h_feret_proxy, h_ellipse_proxy], ...
-        {sprintf('Feret max axis (n=%d)', sum(valid_methods)), ...
-        sprintf('Ellipse major axis (n=%d)', sum(valid_methods))}, ...
-        'Location', 'northeast');
-    grid(ax1, 'on');
-    hold(ax1, 'off');
-end
+ax2 = nexttile(tlo);
+plot(ax2, slice_metrics.z_rel_um, slice_metrics.perimeter_um, '-', 'Color', [0.10 0.65 0.40], 'LineWidth', 1.8);
+hold(ax2, 'on');
+plot(ax2, slice_metrics.z_rel_at_peak_perimeter_um, slice_metrics.peak_perimeter_um, 'o', ...
+    'MarkerSize', 7, 'MarkerFaceColor', [0.90 0.20 0.10], 'MarkerEdgeColor', 'w', 'LineWidth', 0.8);
+xlabel(ax2, 'z relative to reference plane (\mum)');
+ylabel(ax2, 'Perimeter (\mum)');
+title(ax2, sprintf('Perimeter vs z_{rel} | peak %.2f \\mum at %.2f \\mum', ...
+    slice_metrics.peak_perimeter_um, slice_metrics.z_rel_at_peak_perimeter_um), 'FontSize', 10);
+grid(ax2, 'on');
+hold(ax2, 'off');
 
-ax2 = subplot(1, 2, 2);
-valid_agreement = isfinite(agreement_v);
-if ~any(valid_agreement)
-    axis(ax2, 'off');
-    text(ax2, 0.5, 0.5, 'No valid orientation-agreement data', 'HorizontalAlignment', 'center');
-else
-    edges = 0:5:90;
-    histogram(ax2, agreement_v(valid_agreement), edges, ...
-        'FaceColor', [0.45 0.65 0.25], 'EdgeColor', 'none', 'FaceAlpha', 0.50);
-    hold(ax2, 'on');
-    reliable_agreement = valid_agreement & reliable_flag_v;
-    histogram(ax2, agreement_v(reliable_agreement), edges, ...
-        'FaceColor', [0.15 0.45 0.10], 'EdgeColor', 'none', 'FaceAlpha', 0.70);
-    xline(ax2, mean(agreement_v(valid_agreement), 'omitnan'), '-', ...
-        'Color', [0.10 0.35 0.10], 'LineWidth', 1.6);
-    xlabel(ax2, 'Feret vs ellipse axis difference (deg)');
-    ylabel(ax2, 'Count');
-    title(ax2, 'Orientation-method agreement', 'FontSize', 10);
-    h_all_proxy = makePatchLegendProxy(ax2, [0.45 0.65 0.25], 0.50);
-    h_rel_proxy = makePatchLegendProxy(ax2, [0.15 0.45 0.10], 0.70);
-    legend(ax2, [h_all_proxy, h_rel_proxy], ...
-        {sprintf('All valid footprints (n=%d)', sum(valid_agreement)), ...
-        sprintf('Reliable footprints, Feret AR >= 1.10 (n=%d)', sum(reliable_agreement))}, ...
-        'Location', 'northeast');
-    grid(ax2, 'on');
-    hold(ax2, 'off');
-end
+ax3 = nexttile(tlo);
+plot(ax3, slice_metrics.z_rel_um, slice_metrics.cumulative_surface_area_um2, '-', 'Color', [0.55 0.25 0.80], 'LineWidth', 1.8);
+xlabel(ax3, 'z relative to reference plane (\mum)');
+ylabel(ax3, 'Cumulative 3D surface area (\mum^2)');
+title(ax3, 'Cumulative surface area vs z_{rel}', 'FontSize', 10);
+grid(ax3, 'on');
 
-sgtitle(fig, sprintf('%s | Orientation comparison: Feret max vs ellipse major axis', imageName), 'Interpreter', 'none');
-outPath = fullfile(outputDir, [imageName '_orientation_compare.png']);
-exportgraphics(fig, outPath, 'Resolution', 150);
-fprintf('  Saved: %s\n', outPath);
-end
+ax4 = nexttile(tlo);
+plot(ax4, slice_metrics.z_rz_um, slice_metrics.cross_section_area_um2, '-', 'Color', [0.15 0.50 0.85], 'LineWidth', 1.8);
+hold(ax4, 'on');
+xline(ax4, slice_metrics.z_rz_at_half_area_um, '--', 'Color', [0.85 0.25 0.10], 'LineWidth', 1.3);
+xlim(ax4, [0 slice_metrics.rz_span_um]);
+xlabel(ax4, 'Height from Rv toward Rp (\mum)');
+ylabel(ax4, 'Cross-sectional area (\mum^2)');
+title(ax4, sprintf('Area vs 0-to-Rz axis | half-area at %.2f \\mum', slice_metrics.z_rz_at_half_area_um), 'FontSize', 10);
+grid(ax4, 'on');
+hold(ax4, 'off');
 
-function makePercentileHeightHistFigure(imageName, outputDir, height_open_v, height_typical_v, height_crowded_v)
-fig = createDiagnosticFigure('Percentile height distributions', [120 120 1300 700]);
-ax = axes(fig);
-all_heights = [height_open_v(:); height_typical_v(:); height_crowded_v(:)];
-all_heights = all_heights(isfinite(all_heights));
-if isempty(all_heights)
-    axis(ax, 'off');
-    text(ax, 0.5, 0.5, 'No valid percentile-based height data', 'HorizontalAlignment', 'center');
-else
-    lo = min(all_heights);
-    hi = max(all_heights);
-    if hi <= lo
-        hi = lo + 0.1;
-    end
-    edges = linspace(lo * 0.95, hi * 1.05, 31);
-    h_open = histogram(ax, height_open_v, edges, 'FaceColor', [0.15 0.70 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.50); hold(ax, 'on');
-    h_typical = histogram(ax, height_typical_v, edges, 'FaceColor', [0.95 0.75 0.20], 'EdgeColor', 'none', 'FaceAlpha', 0.50);
-    h_crowded = histogram(ax, height_crowded_v, edges, 'FaceColor', [0.90 0.35 0.15], 'EdgeColor', 'none', 'FaceAlpha', 0.45);
-    xline(ax, mean(height_open_v, 'omitnan'), '-', 'Color', [0.05 0.45 0.65], 'LineWidth', 1.8);
-    xline(ax, mean(height_typical_v, 'omitnan'), '-', 'Color', [0.70 0.55 0.05], 'LineWidth', 1.8);
-    xline(ax, mean(height_crowded_v, 'omitnan'), '-', 'Color', [0.65 0.15 0.05], 'LineWidth', 1.8);
-    xlabel(ax, 'Peak-above-local-base height (\mum)');
-    ylabel(ax, 'Count');
-    title(ax, 'Percentile-based height distributions', 'FontSize', 10);
-    h_open_proxy = makePatchLegendProxy(ax, [0.15 0.70 0.85], 0.50);
-    h_typical_proxy = makePatchLegendProxy(ax, [0.95 0.75 0.20], 0.50);
-    h_crowded_proxy = makePatchLegendProxy(ax, [0.90 0.35 0.15], 0.45);
-    legend(ax, [h_open_proxy, h_typical_proxy, h_crowded_proxy], {sprintf('Open-side Q10 (n=%d)', numel(height_open_v)), ...
-        sprintf('Typical Q50 (n=%d)', numel(height_typical_v)), ...
-        sprintf('Crowded-side Q90 (n=%d)', numel(height_crowded_v))}, 'Location', 'northeast');
-    grid(ax, 'on');
-    hold(ax, 'off');
-end
-sgtitle(fig, sprintf('%s | Open / typical / crowded height comparison', imageName), 'Interpreter', 'none');
-outPath = fullfile(outputDir, [imageName '_height_percentile_compare.png']);
+ax5 = nexttile(tlo);
+plot(ax5, slice_metrics.z_rz_um, slice_metrics.perimeter_um, '-', 'Color', [0.10 0.65 0.40], 'LineWidth', 1.8);
+hold(ax5, 'on');
+plot(ax5, slice_metrics.z_rz_at_peak_perimeter_um, slice_metrics.peak_perimeter_um, 'o', ...
+    'MarkerSize', 7, 'MarkerFaceColor', [0.90 0.20 0.10], 'MarkerEdgeColor', 'w', 'LineWidth', 0.8);
+xlim(ax5, [0 slice_metrics.rz_span_um]);
+xlabel(ax5, 'Height from Rv toward Rp (\mum)');
+ylabel(ax5, 'Perimeter (\mum)');
+title(ax5, sprintf('Perimeter vs 0-to-Rz axis | peak at %.2f \\mum', slice_metrics.z_rz_at_peak_perimeter_um), 'FontSize', 10);
+grid(ax5, 'on');
+hold(ax5, 'off');
+
+ax6 = nexttile(tlo);
+plot(ax6, slice_metrics.z_rz_um, slice_metrics.cumulative_surface_area_um2, '-', 'Color', [0.55 0.25 0.80], 'LineWidth', 1.8);
+xlim(ax6, [0 slice_metrics.rz_span_um]);
+xlabel(ax6, 'Height from Rv toward Rp (\mum)');
+ylabel(ax6, 'Cumulative 3D surface area (\mum^2)');
+title(ax6, 'Cumulative surface area vs 0-to-Rz axis', 'FontSize', 10);
+grid(ax6, 'on');
+
+sgtitle(fig, sprintf('%s | Whole-image height-slice morphology', imageName), 'Interpreter', 'none');
+outPath = fullfile(outputDir, [imageName '_whole_image_height_slices.png']);
 exportgraphics(fig, outPath, 'Resolution', 150);
 fprintf('  Saved: %s\n', outPath);
 end
@@ -2280,9 +2381,9 @@ fig = createDiagnosticFigure('Rp Rv Rz diagnostic', [140 140 1300 560]);
 ax1 = subplot(1, 2, 1);
 all_vals = [rp_v; rv_v; rz_v];
 edges = linspace(floor(min(all_vals) * 10) / 10, ceil(max(all_vals) * 10) / 10, 31);
-h_rp = histogram(ax1, rp_v, edges, 'FaceColor', [0.25 0.55 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.75); hold(ax1, 'on');
-h_rv = histogram(ax1, rv_v, edges, 'FaceColor', [0.85 0.40 0.20], 'EdgeColor', 'none', 'FaceAlpha', 0.75);
-h_rz = histogram(ax1, rz_v, edges, 'FaceColor', [0.45 0.65 0.25], 'EdgeColor', 'none', 'FaceAlpha', 0.55);
+histogram(ax1, rp_v, edges, 'FaceColor', [0.25 0.55 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.75); hold(ax1, 'on');
+histogram(ax1, rv_v, edges, 'FaceColor', [0.85 0.40 0.20], 'EdgeColor', 'none', 'FaceAlpha', 0.75);
+histogram(ax1, rz_v, edges, 'FaceColor', [0.45 0.65 0.25], 'EdgeColor', 'none', 'FaceAlpha', 0.55);
 xline(ax1, mean(rp_v), '-', 'LineWidth', 1.8, 'Color', [0.10 0.35 0.75], 'Label', sprintf('mean Rp = %.2f', mean(rp_v)));
 xline(ax1, mean(rv_v), '-', 'LineWidth', 1.8, 'Color', [0.75 0.25 0.10], 'Label', sprintf('mean Rv = %.2f', mean(rv_v)));
 xline(ax1, mean(rz_v), '-', 'LineWidth', 1.8, 'Color', [0.25 0.55 0.15], 'Label', sprintf('mean Rz = %.2f', mean(rz_v)));
@@ -2299,13 +2400,13 @@ ax2 = subplot(1, 2, 2);
 prof_row = max(1, min(size(Z_raw,1), round(median(cy_v))));
 z_raw_prof = Z_raw(prof_row, :);
 x_um = (1:size(Z_raw,2)) * xy;
-h_raw = plot(ax2, x_um, z_raw_prof, '-', 'Color', [0.55 0.55 0.55], 'LineWidth', 0.7); hold(ax2, 'on');
-h_smooth = plot(ax2, x_um, Z_smooth(prof_row,:), '-', 'Color', [0.2 0.5 0.85], 'LineWidth', 1.5);
-h_ref = yline(ax2, refPlane_um, 'k--', 'LineWidth', 1.5, 'Label', sprintf('refPlane = %.2f', refPlane_um));
+plot(ax2, x_um, z_raw_prof, '-', 'Color', [0.55 0.55 0.55], 'LineWidth', 0.7); hold(ax2, 'on');
+plot(ax2, x_um, Z_smooth(prof_row,:), '-', 'Color', [0.2 0.5 0.85], 'LineWidth', 1.5);
+yline(ax2, refPlane_um, 'k--', 'LineWidth', 1.5, 'Label', sprintf('refPlane = %.2f', refPlane_um));
 annotation_x = x_um(round(0.88 * numel(x_um)));
-h_rp_line = plot(ax2, [annotation_x annotation_x], [refPlane_um max(z_raw_prof)], 'r-', 'LineWidth', 1.5);
+plot(ax2, [annotation_x annotation_x], [refPlane_um max(z_raw_prof)], 'r-', 'LineWidth', 1.5);
 text(ax2, annotation_x * 1.005, mean([refPlane_um max(z_raw_prof)]), sprintf('Rp=%.1fµm', Rp_global), 'Color', 'r', 'FontSize', 8, 'FontWeight', 'bold');
-h_rv_line = plot(ax2, [annotation_x annotation_x], [min(z_raw_prof) refPlane_um], '-', 'Color', [0.85 0.40 0.20], 'LineWidth', 1.5);
+plot(ax2, [annotation_x annotation_x], [min(z_raw_prof) refPlane_um], '-', 'Color', [0.85 0.40 0.20], 'LineWidth', 1.5);
 text(ax2, annotation_x * 1.005, mean([min(z_raw_prof) refPlane_um]), sprintf('Rv=%.1fµm', Rv_global), 'Color', [0.85 0.40 0.20], 'FontSize', 8, 'FontWeight', 'bold');
 near_row = abs(cy_v - prof_row) < nn_mean_px * 0.4;
 h_peaks = gobjects(1);
@@ -2320,8 +2421,8 @@ legend_handles = [...
     makeLineLegendProxy(ax2, [0.85 0.40 0.20], '-', 1.5, 'none', 6, 'none', [0.85 0.40 0.20])];
 legend_labels = {'Z_{raw}', 'Z_{smooth}', 'Reference plane', 'Rp', 'Rv'};
 if any(isgraphics(h_peaks))
-    legend_handles(end+1) = makeLineLegendProxy(ax2, [1 0.85 0], 'none', 0.5, 'v', 6, [1 0.85 0], [1 1 1]); %#ok<AGROW>
-    legend_labels{end+1} = 'Mound peaks'; %#ok<AGROW>
+    legend_handles(end+1) = makeLineLegendProxy(ax2, [1 0.85 0], 'none', 0.5, 'v', 6, [1 0.85 0], [1 1 1]);
+    legend_labels{end+1} = 'Mound peaks';
 end
 legend(ax2, legend_handles, legend_labels, 'Location', 'southeast', 'FontSize', 8);
 xlabel(ax2, 'x (µm)'); ylabel(ax2, 'Height (µm)');
@@ -2392,16 +2493,16 @@ ax3 = subplot(2, 2, 3);
 if any(both_valid)
     rvB = rv_b(both_valid);
     rvC = rv_c(both_valid);
-    h_scatter = scatter(ax3, rvB, rvC, 30, nn_radius_px(both_valid) * xy, 'filled', 'MarkerFaceAlpha', 0.75);
+    scatter(ax3, rvB, rvC, 30, nn_radius_px(both_valid) * xy, 'filled', 'MarkerFaceAlpha', 0.75);
     hold(ax3, 'on');
     lims = [min([rvB; rvC]), max([rvB; rvC])];
     if diff(lims) < eps
         lims = lims + [-0.1 0.1];
     end
-    h_identity = plot(ax3, lims, lims, 'k--', 'LineWidth', 1.2);
+    plot(ax3, lims, lims, 'k--', 'LineWidth', 1.2);
     pfit = polyfit(rvB, rvC, 1);
     xx = linspace(lims(1), lims(2), 100);
-    h_fit = plot(ax3, xx, polyval(pfit, xx), 'r-', 'LineWidth', 1.2);
+    plot(ax3, xx, polyval(pfit, xx), 'r-', 'LineWidth', 1.2);
     cb = colorbar(ax3);
     cb.Label.String = 'NN radius (um)';
     xlabel(ax3, 'Rv - Method B circles (um)');
@@ -2431,8 +2532,8 @@ else
         hi = lo + 0.1;
     end
     edges = linspace(lo * 0.9, hi * 1.05, 31);
-    h_hist_b = histogram(ax4, height_b, edges, 'FaceColor', [0.25 0.55 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.65); hold(ax4, 'on');
-    h_hist_c = histogram(ax4, height_c, edges, 'FaceColor', [0.90 0.50 0.15], 'EdgeColor', 'none', 'FaceAlpha', 0.65);
+    histogram(ax4, height_b, edges, 'FaceColor', [0.25 0.55 0.85], 'EdgeColor', 'none', 'FaceAlpha', 0.65); hold(ax4, 'on');
+    histogram(ax4, height_c, edges, 'FaceColor', [0.90 0.50 0.15], 'EdgeColor', 'none', 'FaceAlpha', 0.65);
     xline(ax4, mean(height_b, 'omitnan'), '-', 'Color', [0.10 0.35 0.75], 'LineWidth', 1.8);
     xline(ax4, mean(height_c, 'omitnan'), '-', 'Color', [0.75 0.30 0.05], 'LineWidth', 1.8);
     xlabel(ax4, 'Height / base-position magnitude (um)');

@@ -34,7 +34,7 @@ set(groot, 'DefaultFigureVisible', 'off');
 fprintf('VK4 PIPELINE SMOKE TEST: %s\n', vk4FileName);
 
 results = struct('name', {}, 'status', {}, 'mounds', {}, 'cavities', {}, ...
-                 'shape_n', {}, 'message', {});
+                 'shape_n', {}, 'order_n', {}, 'message', {});
 
 outDir = fullfile(outBase, erase(vk4FileName, '.vk4'));
 if ~exist(outDir, 'dir')
@@ -49,6 +49,7 @@ try
     m1 = analyzeMounds(targetPath, bestParams, fillDeepPits, fillThreshold, 3, 20, [], [], outDir);
     c2 = analyzeCavities(m1, 2.0, fillDeepPits, fillThreshold, [], outDir);
     m3 = analyzeMoundShape(m1, outDir);
+    m4 = analyzeSpatialOrder(m1, outDir);
     assert(isfield(m3, 'Rz_per_mound'));
     assert(isfield(m3, 'preferred_Rz_per_mound'));
     assert(isfield(m3, 'mound_base_position_um'));
@@ -67,6 +68,22 @@ try
     assert(m3.method_c_band_width_px == 2);
     assert(any(isfinite(m3.watershed_peak_z_um)));
     assert(all(isfinite(m3.feret_max_um(m3.preferred_valid_flag))));
+    assert(isfield(m4, 'local_psi6'));
+    assert(isfield(m4, 'global_psi6'));
+    assert(isfield(m4, 'coordination_number'));
+    assert(isfield(m4, 'pair_r_um'));
+    assert(isfield(m4, 'pair_g_r'));
+    assert(isfield(m4, 'bond_angle_bins_deg'));
+    assert(isfield(m4, 'bond_angle_counts'));
+    assert(numel(m4.local_psi6) == m1.n_mounds);
+    assert(all(isfinite(m4.coordination_number)));
+    assert(~isempty(m4.pair_r_um));
+    assert(numel(m4.pair_r_um) == numel(m4.pair_g_r));
+    assert(isfinite(m4.global_psi6));
+    assert(m4.global_psi6 >= 0 && m4.global_psi6 <= 1 + 1e-9);
+    assert(exist(m4.xlsx_path, 'file') == 2);
+    assert(exist(m4.psi6_map_path, 'file') == 2);
+    assert(exist(m4.pair_plot_path, 'file') == 2);
 
     results(end+1) = struct( ... %#ok<AGROW>
         'name', vk4FileName, ...
@@ -74,10 +91,11 @@ try
         'mounds', m1.n_mounds, ...
         'cavities', c2.n_cavities, ...
         'shape_n', m3.n_mounds, ...
+        'order_n', m4.n_mounds, ...
         'message', '');
 
-    fprintf('PIPELINE PASS: mounds=%d cavities=%d shape_n=%d\n', ...
-            m1.n_mounds, c2.n_cavities, m3.n_mounds);
+    fprintf('PIPELINE PASS: mounds=%d cavities=%d shape_n=%d order_n=%d\n', ...
+            m1.n_mounds, c2.n_cavities, m3.n_mounds, m4.n_mounds);
 catch ME
     results(end+1) = struct( ... %#ok<AGROW>
         'name', vk4FileName, ...
@@ -85,6 +103,7 @@ catch ME
         'mounds', NaN, ...
         'cavities', NaN, ...
         'shape_n', NaN, ...
+        'order_n', NaN, ...
         'message', ME.getReport());
 
     fprintf(2, 'PIPELINE FAIL: %s\n', ME.message);
@@ -94,9 +113,9 @@ close all force;
 
 fprintf('\nFINAL SUMMARY\n');
 for k = 1:numel(results)
-    fprintf('%s | %s | mounds=%g cavities=%g shape_n=%g\n', ...
+    fprintf('%s | %s | mounds=%g cavities=%g shape_n=%g order_n=%g\n', ...
             results(k).name, results(k).status, ...
-            results(k).mounds, results(k).cavities, results(k).shape_n);
+            results(k).mounds, results(k).cavities, results(k).shape_n, results(k).order_n);
     if ~isempty(results(k).message)
         fprintf('  message: %s\n', results(k).message);
     end
