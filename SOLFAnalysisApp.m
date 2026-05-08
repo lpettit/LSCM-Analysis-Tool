@@ -7,6 +7,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         RunModule1CheckBox matlab.ui.control.CheckBox
         RunModule2CheckBox matlab.ui.control.CheckBox
         RunModule3CheckBox matlab.ui.control.CheckBox
+        RunModule4CheckBox matlab.ui.control.CheckBox
         FillDeepPitsCheckBox matlab.ui.control.CheckBox
         FillThresholdField matlab.ui.control.NumericEditField
         PickFillThresholdButton matlab.ui.control.Button
@@ -53,6 +54,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 'runModule1', logical(app.RunModule1CheckBox.Value), ...
                 'runModule2', logical(app.RunModule2CheckBox.Value), ...
                 'runModule3', logical(app.RunModule3CheckBox.Value), ...
+                'runModule4', logical(app.RunModule4CheckBox.Value), ...
                 'fillDeepPits', logical(app.FillDeepPitsCheckBox.Value), ...
                 'fillThreshold', app.getFillThresholdValue(), ...
                 'showAutoTunePlots', logical(app.ShowAutoTunePlotsCheckBox.Value), ...
@@ -130,7 +132,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     uialert(app.UIFigure, 'Choose an output folder first.', 'Missing Output');
                     return;
                 end
-                if ~(config.runModule1 || config.runModule2 || config.runModule3)
+                if ~(config.runModule1 || config.runModule2 || config.runModule3 || config.runModule4)
                     uialert(app.UIFigure, 'Select at least one module to run.', 'No Modules Selected');
                     return;
                 end
@@ -162,8 +164,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
 
         function createComponents(app)
             app.UIFigure = uifigure('Name', 'SOLF VK4 Analysis App', 'Position', [100 100 900 680]);
-            app.Grid = uigridlayout(app.UIFigure, [12 4]);
-            app.Grid.RowHeight = {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, '1x', 40};
+            app.Grid = uigridlayout(app.UIFigure, [13 4]);
+            app.Grid.RowHeight = {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, '1x', 40};
             app.Grid.ColumnWidth = {150, '1x', 120, 150};
             app.Grid.Padding = [12 12 12 12];
 
@@ -189,9 +191,11 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.RunModule2CheckBox.Layout.Row = 3; app.RunModule2CheckBox.Layout.Column = 3;
             app.RunModule3CheckBox = uicheckbox(app.Grid, 'Text', 'Run Module 3', 'Value', true);
             app.RunModule3CheckBox.Layout.Row = 3; app.RunModule3CheckBox.Layout.Column = 4;
+            app.RunModule4CheckBox = uicheckbox(app.Grid, 'Text', 'Run Module 4', 'Value', false);
+            app.RunModule4CheckBox.Layout.Row = 4; app.RunModule4CheckBox.Layout.Column = 2;
 
             app.FillDeepPitsCheckBox = uicheckbox(app.Grid, 'Text', 'Use reflection correction', 'Value', false);
-            app.FillDeepPitsCheckBox.Layout.Row = 4; app.FillDeepPitsCheckBox.Layout.Column = 2;
+            app.FillDeepPitsCheckBox.Layout.Row = 4; app.FillDeepPitsCheckBox.Layout.Column = [3 4];
             app.FillDeepPitsCheckBox.ValueChangedFcn = @(src, event) app.onFillDeepPitsChanged(src, event);
 
             app.FillThresholdField = uieditfield(app.Grid, 'numeric', ...
@@ -199,50 +203,50 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 'Limits', [0 1], ...
                 'LowerLimitInclusive', false, ...
                 'UpperLimitInclusive', false);
-            app.FillThresholdField.Layout.Row = 4; app.FillThresholdField.Layout.Column = 3;
+            app.FillThresholdField.Layout.Row = 5; app.FillThresholdField.Layout.Column = 3;
             app.FillThresholdField.Tooltip = 'fillThreshold used when reflection correction is enabled';
 
             app.PickFillThresholdButton = uibutton(app.Grid, 'push', 'Text', 'Pick fill threshold...');
-            app.PickFillThresholdButton.Layout.Row = 4; app.PickFillThresholdButton.Layout.Column = 4;
+            app.PickFillThresholdButton.Layout.Row = 5; app.PickFillThresholdButton.Layout.Column = 4;
             app.PickFillThresholdButton.ButtonPushedFcn = @(src, event) app.onPickFillThreshold(src, event);
 
             app.ShowAutoTunePlotsCheckBox = uicheckbox(app.Grid, 'Text', 'Show auto-tune plots', 'Value', true);
-            app.ShowAutoTunePlotsCheckBox.Layout.Row = 5; app.ShowAutoTunePlotsCheckBox.Layout.Column = [2 3];
+            app.ShowAutoTunePlotsCheckBox.Layout.Row = 6; app.ShowAutoTunePlotsCheckBox.Layout.Column = [2 3];
 
             lbl = uilabel(app.Grid, 'Text', 'Max optimization evaluations', 'HorizontalAlignment', 'right');
-            lbl.Layout.Row = 6; lbl.Layout.Column = 1;
+            lbl.Layout.Row = 7; lbl.Layout.Column = 1;
             app.AutoTuneEvalsField = uieditfield(app.Grid, 'numeric', ...
                 'Value', 60, 'Limits', [1 Inf], 'RoundFractionalValues', true);
-            app.AutoTuneEvalsField.Layout.Row = 6; app.AutoTuneEvalsField.Layout.Column = 2;
+            app.AutoTuneEvalsField.Layout.Row = 7; app.AutoTuneEvalsField.Layout.Column = 2;
             lbl = uilabel(app.Grid, 'Text', 'Dilate radius', 'HorizontalAlignment', 'right');
-            lbl.Layout.Row = 6; lbl.Layout.Column = 3;
+            lbl.Layout.Row = 7; lbl.Layout.Column = 3;
             app.DilateRadiusField = uieditfield(app.Grid, 'numeric', ...
                 'Value', 3, 'Limits', [1 Inf], 'RoundFractionalValues', true);
-            app.DilateRadiusField.Layout.Row = 6; app.DilateRadiusField.Layout.Column = 4;
+            app.DilateRadiusField.Layout.Row = 7; app.DilateRadiusField.Layout.Column = 4;
 
             lbl = uilabel(app.Grid, 'Text', 'Min object area', 'HorizontalAlignment', 'right');
-            lbl.Layout.Row = 7; lbl.Layout.Column = 1;
+            lbl.Layout.Row = 8; lbl.Layout.Column = 1;
             app.MinObjectAreaField = uieditfield(app.Grid, 'numeric', ...
                 'Value', 20, 'Limits', [1 Inf], 'RoundFractionalValues', true);
-            app.MinObjectAreaField.Layout.Row = 7; app.MinObjectAreaField.Layout.Column = 2;
+            app.MinObjectAreaField.Layout.Row = 8; app.MinObjectAreaField.Layout.Column = 2;
             lbl = uilabel(app.Grid, 'Text', 'Min cavity depth (um)', 'HorizontalAlignment', 'right');
-            lbl.Layout.Row = 7; lbl.Layout.Column = 3;
+            lbl.Layout.Row = 8; lbl.Layout.Column = 3;
             app.MinDepthField = uieditfield(app.Grid, 'numeric', 'Value', 2.0, 'Limits', [0 Inf]);
-            app.MinDepthField.Layout.Row = 7; app.MinDepthField.Layout.Column = 4;
+            app.MinDepthField.Layout.Row = 8; app.MinDepthField.Layout.Column = 4;
 
             app.UseRefineMoundsCheckBox = uicheckbox(app.Grid, ...
                 'Text', 'Use refineMounds after autoTune if more control is needed', ...
                 'Value', false);
-            app.UseRefineMoundsCheckBox.Layout.Row = 8;
+            app.UseRefineMoundsCheckBox.Layout.Row = 9;
             app.UseRefineMoundsCheckBox.Layout.Column = [2 4];
 
             lbl = uilabel(app.Grid, 'Text', 'Status', 'HorizontalAlignment', 'left', 'FontWeight', 'bold');
-            lbl.Layout.Row = 9; lbl.Layout.Column = 1;
+            lbl.Layout.Row = 10; lbl.Layout.Column = 1;
             app.StatusTextArea = uitextarea(app.Grid, 'Editable', 'off');
-            app.StatusTextArea.Layout.Row = 10; app.StatusTextArea.Layout.Column = [1 4];
+            app.StatusTextArea.Layout.Row = 11; app.StatusTextArea.Layout.Column = [1 4];
 
             btnRun = uibutton(app.Grid, 'push', 'Text', 'Run Analysis', 'FontWeight', 'bold');
-            btnRun.Layout.Row = 12; btnRun.Layout.Column = [3 4];
+            btnRun.Layout.Row = 13; btnRun.Layout.Column = [3 4];
             btnRun.ButtonPushedFcn = @(src, event) app.onRun(src, event);
 
             app.onFillDeepPitsChanged();

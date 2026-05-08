@@ -16,7 +16,7 @@ if ~exist(config.outputDir, 'dir')
 end
 
 runResults = struct('config', config, 'bestParams', [], 'm1', [], ...
-    'cavResults', [], 'moundResults', []);
+    'cavResults', [], 'moundResults', [], 'spatialOrderResults', []);
 
 fprintf('runSOLFAnalysis: %s\n', config.inputPath);
 
@@ -28,7 +28,7 @@ if config.fillDeepPits && config.runModule2 && isempty(config.reflThreshold)
 end
 runResults.config = config;
 
-needM1 = config.runModule1 || config.runModule2 || config.runModule3;
+needM1 = config.runModule1 || config.runModule2 || config.runModule3 || config.runModule4;
 if ~needM1
     warning('runSOLFAnalysis:NoModules', 'No analysis modules selected.');
     return;
@@ -62,6 +62,11 @@ if config.runModule3
     fprintf('  Running Module 3...\n');
     runResults.moundResults = analyzeMoundShape(m1, config.outputDir);
 end
+
+if config.runModule4
+    fprintf('  Running Module 4...\n');
+    runResults.spatialOrderResults = analyzeSpatialOrder(m1, config.outputDir);
+end
 end
 
 function config = applyDefaults(config)
@@ -69,6 +74,7 @@ defaults = struct( ...
     'runModule1', true, ...
     'runModule2', false, ...
     'runModule3', true, ...
+    'runModule4', false, ...
     'fillDeepPits', false, ...
     'fillThreshold', [], ...
     'reflThreshold', [], ...
