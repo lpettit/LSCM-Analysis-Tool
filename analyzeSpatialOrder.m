@@ -28,6 +28,9 @@ function spatialOrderResults = analyzeSpatialOrder(m1, outputDir)
 %    bond_angle_bins_deg - bond-orientation bin centers in degrees
 %    bond_angle_counts   - bond counts per orientation bin
 %    disorder_flag       - softened interior-focused disorder flag
+%    acf2d               - provisional 2D surface-height autocorrelation
+%    acf_anisotropy_ratio - provisional directional elongation summary
+%    acf_dominant_orientation_deg - provisional preferred orientation
 %
 %  SAVES:
 %    <n>_spatial_order_psi6.png
@@ -38,6 +41,10 @@ function spatialOrderResults = analyzeSpatialOrder(m1, outputDir)
 %    <n>_neighbor_shells.png
 %    <n>_pair_distribution.png
 %    <n>_bond_angles.png
+%    <n>_acf2d.png
+%    <n>_acf_radial.png
+%    <n>_acf_directional_cuts.png
+%    <n>_acf_vs_gr.png
 %    <n>_spatial_order.xlsx
 %    <n>_spatial_order.mat
 %
@@ -75,6 +82,11 @@ n_mounds = size(centroids, 1);
 nn_mean_px = double(m1.nn_mean_px);
 nn_mean_um = double(m1.nn_mean_um);
 I_rgb = repmat(m1.I_raw, [1 1 3]);
+if ~isfield(m1, 'Z') || isempty(m1.Z)
+    error('analyzeSpatialOrder:MissingHeightMap', ...
+        'Module 4 autocorrelation testing requires m1.Z to be present.');
+end
+Z_um = double(m1.Z);
 
 if n_mounds < 4
     error('analyzeSpatialOrder:TooFewMounds', ...
@@ -146,6 +158,10 @@ fprintf('  Interior disorder fraction : %.3f\n', safeMean(disorder_flag(interior
     pair_density_um2] = computePairDistribution(centroids, xy, nn_mean_um);
 [first_peak_r_um, first_peak_g_r] = estimateFirstPairPeak(pair_r_um, pair_g_r, nn_mean_um);
 radial_order_score = first_peak_g_r - 1.0;
+[acf2d, acf_lag_x_um, acf_lag_y_um, acf_r_um, acf_r, ~, ...
+    ~, ~, ~, ...
+    acf_anisotropy_ratio, acf_dominant_orientation_deg, acf_x_cut, acf_y_cut, ...
+    ~, ~] = computeSurfaceAutocorrelation(Z_um, xy, nn_mean_um);
 [nn1_um, nn2_um, nn3_um, neighbor_distance_matrix_um] = computeNeighborShellDistances(centroids, xy);
 [voronoi_area_um2, local_density_um2_inv, voronoi_valid_flag, voronoi_polygons_px, ...
     voronoi_clipped_flag, voronoi_augmented_flag, voronoi_added_seed_count] = ...
@@ -185,6 +201,10 @@ voronoi_area_hist_path = fullfile(outputDir, [imageName '_voronoi_area_hist.png'
 neighbor_shells_path = fullfile(outputDir, [imageName '_neighbor_shells.png']);
 pair_plot_path = fullfile(outputDir, [imageName '_pair_distribution.png']);
 bond_plot_path = fullfile(outputDir, [imageName '_bond_angles.png']);
+acf2d_path = fullfile(outputDir, [imageName '_acf2d.png']);
+acf_radial_path = fullfile(outputDir, [imageName '_acf_radial.png']);
+acf_directional_path = fullfile(outputDir, [imageName '_acf_directional_cuts.png']);
+acf_vs_gr_path = fullfile(outputDir, [imageName '_acf_vs_gr.png']);
 xlsx_path = fullfile(outputDir, [imageName '_spatial_order.xlsx']);
 mat_path = fullfile(outputDir, [imageName '_spatial_order.mat']);
 tabbed_fig = createSpatialOrderTabbedFigure(imageName);
@@ -440,6 +460,66 @@ title('Rose-style view (doubled to show 180 deg symmetry)');
 exportgraphics(t, bond_plot_path, 'Resolution', 150);
 fprintf('  Saved: %s\n', bond_plot_path);
 
+fprintf('  Generating autocorrelation diagnostics...\n');
+ax_acf2d = axes('Parent', tabbed_fig.tabs.acf2d);
+imagesc(ax_acf2d, acf_lag_x_um, acf_lag_y_um, acf2d);
+axis(ax_acf2d, 'image');
+set(ax_acf2d, 'YDir', 'normal');
+colormap(ax_acf2d, parula(256));
+cb = colorbar(ax_acf2d);
+cb.Label.String = 'Normalized ACF';
+xlabel(ax_acf2d, '\Deltax (um)');
+ylabel(ax_acf2d, '\Deltay (um)');
+title(ax_acf2d, sprintf('%s  |  2D surface-height ACF diagnostic', imageName), ...
+    'Interpreter', 'none');
+exportgraphics(ax_acf2d, acf2d_path, 'Resolution', 150);
+fprintf('  Saved: %s\n', acf2d_path);
+
+ax_acf_radial = axes('Parent', tabbed_fig.tabs.acfRadial);
+plot(ax_acf_radial, acf_r_um, acf_r, 'LineWidth', 2.0, 'Color', [0.15 0.45 0.78]);
+hold(ax_acf_radial, 'on');
+yline(ax_acf_radial, 0.0, '--', 'Color', [0.60 0.60 0.60], 'LineWidth', 1.0);
+xlabel(ax_acf_radial, 'r (um)');
+ylabel(ax_acf_radial, 'Radial ACF');
+title(ax_acf_radial, sprintf('%s  |  radial ACF diagnostic', imageName), 'Interpreter', 'none');
+grid(ax_acf_radial, 'on');
+hold(ax_acf_radial, 'off');
+exportgraphics(ax_acf_radial, acf_radial_path, 'Resolution', 150);
+fprintf('  Saved: %s\n', acf_radial_path);
+
+t = tiledlayout(tabbed_fig.tabs.acfCuts, 1, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
+
+nexttile(t, 1);
+plot(gca, acf_lag_x_um, acf_x_cut, 'LineWidth', 2.0, 'Color', [0.85 0.33 0.10]);
+xlabel(gca, '\Deltax (um)');
+ylabel(gca, 'ACF');
+title(gca, 'Horizontal cut (\Deltay = 0)');
+grid(gca, 'on');
+
+nexttile(t, 2);
+plot(gca, acf_lag_y_um, acf_y_cut, 'LineWidth', 2.0, 'Color', [0.10 0.55 0.42]);
+xlabel(gca, '\Deltay (um)');
+ylabel(gca, 'ACF');
+title(gca, sprintf('Vertical cut (\\Deltax = 0) | anisotropy %.2f | %.1f deg', ...
+    acf_anisotropy_ratio, acf_dominant_orientation_deg));
+grid(gca, 'on');
+
+exportgraphics(t, acf_directional_path, 'Resolution', 150);
+fprintf('  Saved: %s\n', acf_directional_path);
+
+ax_acf_compare = axes('Parent', tabbed_fig.tabs.acfCompare);
+yyaxis(ax_acf_compare, 'left');
+plot(ax_acf_compare, acf_r_um, acf_r, 'LineWidth', 2.0, 'Color', [0.15 0.45 0.78]);
+ylabel(ax_acf_compare, 'Radial ACF');
+yyaxis(ax_acf_compare, 'right');
+plot(ax_acf_compare, pair_r_um, pair_g_r, 'LineWidth', 1.8, 'Color', [0.85 0.33 0.10]);
+ylabel(ax_acf_compare, 'Approximate g(r)');
+xlabel(ax_acf_compare, 'r (um)');
+title(ax_acf_compare, sprintf('%s  |  radial ACF vs g(r)', imageName), 'Interpreter', 'none');
+grid(ax_acf_compare, 'on');
+exportgraphics(ax_acf_compare, acf_vs_gr_path, 'Resolution', 150);
+fprintf('  Saved: %s\n', acf_vs_gr_path);
+
 fprintf('  Writing Excel output...\n');
 per_mound_table = table( ...
     (1:n_mounds)', ...
@@ -536,6 +616,8 @@ comparison_table = table( ...
     nn2_cv, ...
     nn3_mean_um, ...
     nn3_cv, ...
+    acf_anisotropy_ratio, ...
+    acf_dominant_orientation_deg, ...
     voronoi_area_mean_um2, ...
     local_density_mean_um2_inv, ...
     mean(voronoi_clipped_flag(voronoi_valid_flag)), ...
@@ -546,6 +628,8 @@ comparison_table = table( ...
     'InteriorGlobalPsi6', 'InteriorMeanLocalPsi6', 'InteriorFractionHighPsi6', ...
     'InteriorFractionModeratePsi6', 'InteriorFractionLowPsi6', ...
     'NN1_CV', 'NN2_Mean_um', 'NN2_CV', 'NN3_Mean_um', 'NN3_CV', ...
+    'ACFAnisotropyRatio', ...
+    'ACFDominantOrientation_deg', ...
     'VoronoiAreaMean_um2', 'LocalDensityMean_um2_inv', ...
     'FractionClippedVoronoi', 'VoronoiAddedSeedCount', 'FractionBoundary'});
 writetable(comparison_table, xlsx_path, 'Sheet', 'Comparison');
@@ -594,6 +678,8 @@ summary_table = table( ...
     first_peak_r_um, ...
     first_peak_g_r, ...
     radial_order_score, ...
+    acf_anisotropy_ratio, ...
+    acf_dominant_orientation_deg, ...
     {radial_order_label}, ...
     {orientational_order_label}, ...
     {comparison_summary_line}, ...
@@ -614,6 +700,7 @@ summary_table = table( ...
     'FractionFiniteVoronoi', 'FractionClippedVoronoi', ...
     'VoronoiAddedSeedCount', 'NumberDensity_per_um2', ...
     'PairBinWidth_um', 'FirstPeak_r_um', 'FirstPeak_g_r', 'RadialOrderScore', ...
+    'ACFAnisotropyRatio', 'ACFDominantOrientation_deg', ...
     'RadialOrderLabel', 'OrientationalOrderLabel', 'ComparisonSummary'});
 writetable(summary_table, xlsx_path, 'Sheet', 'Summary');
 fprintf('  Saved: %s\n', xlsx_path);
@@ -687,6 +774,8 @@ spatialOrderResults.pair_density_per_um2 = pair_density_um2;
 spatialOrderResults.first_peak_r_um = first_peak_r_um;
 spatialOrderResults.first_peak_g_r = first_peak_g_r;
 spatialOrderResults.radial_order_score = radial_order_score;
+spatialOrderResults.acf_anisotropy_ratio = acf_anisotropy_ratio;
+spatialOrderResults.acf_dominant_orientation_deg = acf_dominant_orientation_deg;
 spatialOrderResults.radial_order_label = radial_order_label;
 spatialOrderResults.orientational_order_label = orientational_order_label;
 spatialOrderResults.comparison_summary_line = comparison_summary_line;
@@ -698,6 +787,10 @@ spatialOrderResults.order_level_note = [ ...
 spatialOrderResults.pair_distribution_note = [ ...
     'Approximate 2D g(r) using centroid bounding-box density and no ' ...
     'heavy edge correction in v1.'];
+spatialOrderResults.acf_note = [ ...
+    'Testing-stage 2D surface-height autocorrelation is retained mainly ' ...
+    'as a diagnostic workflow; anisotropy ratio and dominant orientation ' ...
+    'are the only comparison-facing ACF outputs currently kept.'];
 spatialOrderResults.imageName = imageName;
 spatialOrderResults.imagePath = m1.imagePath;
 spatialOrderResults.m1 = m1;
@@ -709,6 +802,10 @@ spatialOrderResults.voronoi_area_hist_path = voronoi_area_hist_path;
 spatialOrderResults.neighbor_shells_path = neighbor_shells_path;
 spatialOrderResults.pair_plot_path = pair_plot_path;
 spatialOrderResults.bond_plot_path = bond_plot_path;
+spatialOrderResults.acf2d_path = acf2d_path;
+spatialOrderResults.acf_radial_path = acf_radial_path;
+spatialOrderResults.acf_directional_path = acf_directional_path;
+spatialOrderResults.acf_vs_gr_path = acf_vs_gr_path;
 spatialOrderResults.xlsx_path = xlsx_path;
 spatialOrderResults.tabbed_figure_handle = tabbed_fig.figure;
 
@@ -806,6 +903,163 @@ end
 
 [first_peak_g_r, idx_local] = max(pair_g_r(candidate_idx));
 first_peak_r_um = pair_r_um(candidate_idx(idx_local));
+end
+
+function [acf2d, lag_x_um, lag_y_um, acf_r_um, acf_r, overlap_fraction, ...
+    correlation_length_um, first_ring_radius_um, first_ring_value, ...
+    anisotropy_ratio, dominant_orientation_deg, x_cut, y_cut, ...
+    detrend_plane, mean_center_value_um] = computeSurfaceAutocorrelation(Z_um, xy_um_per_px, nn_mean_um)
+valid_mask = isfinite(Z_um);
+if nnz(valid_mask) < 9
+    error('analyzeSpatialOrder:InsufficientHeightData', ...
+        'Autocorrelation requires at least 9 finite height pixels.');
+end
+
+[img_h, img_w] = size(Z_um);
+[x_grid, y_grid] = meshgrid(1:img_w, 1:img_h);
+A = [x_grid(valid_mask), y_grid(valid_mask), ones(nnz(valid_mask), 1)];
+detrend_plane = A \ Z_um(valid_mask);
+plane_fit = detrend_plane(1) * x_grid + detrend_plane(2) * y_grid + detrend_plane(3);
+Z_detrended = Z_um - plane_fit;
+mean_center_value_um = mean(Z_detrended(valid_mask), 'omitnan');
+Z_centered = Z_detrended - mean_center_value_um;
+Z_centered(~valid_mask) = 0;
+
+mask_numeric = double(valid_mask);
+fft_surface = fft2(Z_centered);
+fft_mask = fft2(mask_numeric);
+raw_acf = fftshift(real(ifft2(abs(fft_surface).^2)));
+overlap_counts = fftshift(real(ifft2(abs(fft_mask).^2)));
+variance_um2 = sum(Z_centered(valid_mask).^2) / max(nnz(valid_mask), 1);
+max_overlap_count = max(overlap_counts(:));
+
+acf2d = raw_acf ./ max(overlap_counts, 1);
+acf2d = acf2d / max(variance_um2, eps);
+overlap_fraction_2d = overlap_counts ./ max(max_overlap_count, 1);
+acf2d(overlap_fraction_2d < 0.05) = NaN;
+
+lag_x_px = (-floor(img_w / 2)):(ceil(img_w / 2) - 1);
+lag_y_px = (-floor(img_h / 2)):(ceil(img_h / 2) - 1);
+lag_x_um = lag_x_px * xy_um_per_px;
+lag_y_um = lag_y_px * xy_um_per_px;
+
+[acf_r_um, acf_r, overlap_fraction] = radialAverageAutocorrelation(acf2d, overlap_fraction_2d, xy_um_per_px);
+correlation_length_um = estimateCorrelationLength(acf_r_um, acf_r);
+[first_ring_radius_um, first_ring_value] = estimateAutocorrelationRing(acf_r_um, acf_r, nn_mean_um);
+[anisotropy_ratio, dominant_orientation_deg] = estimateAutocorrelationAnisotropy( ...
+    acf2d, lag_x_um, lag_y_um);
+
+row_center = floor(img_h / 2) + 1;
+col_center = floor(img_w / 2) + 1;
+x_cut = acf2d(row_center, :).';
+y_cut = acf2d(:, col_center);
+end
+
+function [r_um, acf_r, overlap_fraction] = radialAverageAutocorrelation(acf2d, overlap_fraction_2d, xy_um_per_px)
+[img_h, img_w] = size(acf2d);
+[x_grid, y_grid] = meshgrid(1:img_w, 1:img_h);
+x0 = floor(img_w / 2) + 1;
+y0 = floor(img_h / 2) + 1;
+r_px = hypot(x_grid - x0, y_grid - y0);
+r_max_px = floor(max(r_px(:)));
+r_edges_px = 0:1:(r_max_px + 1);
+r_um = ((r_edges_px(1:end-1) + r_edges_px(2:end)) / 2) * xy_um_per_px;
+r_um = r_um(:);
+acf_r = nan(numel(r_um), 1);
+overlap_fraction = nan(numel(r_um), 1);
+
+for k = 1:numel(r_um)
+    ring_mask = r_px >= r_edges_px(k) & r_px < r_edges_px(k + 1);
+    values = acf2d(ring_mask);
+    overlap_vals = overlap_fraction_2d(ring_mask);
+    valid = isfinite(values);
+    if any(valid)
+        acf_r(k) = mean(values(valid), 'omitnan');
+        overlap_fraction(k) = mean(overlap_vals(valid), 'omitnan');
+    end
+end
+end
+
+function correlation_length_um = estimateCorrelationLength(acf_r_um, acf_r)
+acf_r_um = acf_r_um(:);
+acf_r = acf_r(:);
+target = exp(-1);
+valid = isfinite(acf_r_um) & isfinite(acf_r);
+acf_r_um = acf_r_um(valid);
+acf_r = acf_r(valid);
+idx = find(acf_r_um > 0 & acf_r <= target, 1, 'first');
+if isempty(idx)
+    correlation_length_um = NaN;
+else
+    correlation_length_um = acf_r_um(idx);
+end
+end
+
+function [first_ring_radius_um, first_ring_value] = estimateAutocorrelationRing(acf_r_um, acf_r, nn_mean_um)
+acf_r_um = acf_r_um(:);
+acf_r = acf_r(:);
+valid = isfinite(acf_r_um) & isfinite(acf_r);
+if ~any(valid)
+    first_ring_radius_um = NaN;
+    first_ring_value = NaN;
+    return;
+end
+search_mask = valid & acf_r_um >= max(nn_mean_um * 0.5, min(acf_r_um(valid))) & ...
+    acf_r_um <= max(nn_mean_um * 2.0, nn_mean_um);
+candidate_idx = find(search_mask);
+if isempty(candidate_idx)
+    first_ring_radius_um = NaN;
+    first_ring_value = NaN;
+    return;
+end
+
+[first_ring_value, idx_local] = max(acf_r(candidate_idx));
+first_ring_radius_um = acf_r_um(candidate_idx(idx_local));
+end
+
+function [anisotropy_ratio, dominant_orientation_deg] = estimateAutocorrelationAnisotropy(acf2d, lag_x_um, lag_y_um)
+[img_h, img_w] = size(acf2d);
+row_center = floor(img_h / 2) + 1;
+col_center = floor(img_w / 2) + 1;
+[x_grid_um, y_grid_um] = meshgrid(lag_x_um, lag_y_um);
+
+peak_mask = isfinite(acf2d) & acf2d >= 0.5;
+peak_mask = peak_mask & hypot(x_grid_um, y_grid_um) > 0;
+if ~peak_mask(row_center, col_center)
+    peak_mask(row_center, col_center) = true;
+end
+
+weights = acf2d(peak_mask) - 0.5;
+weights = max(weights, eps);
+x_vals = x_grid_um(peak_mask);
+y_vals = y_grid_um(peak_mask);
+if numel(weights) < 3
+    anisotropy_ratio = NaN;
+    dominant_orientation_deg = NaN;
+    return;
+end
+
+w_sum = sum(weights);
+x_mean = sum(weights .* x_vals) / w_sum;
+y_mean = sum(weights .* y_vals) / w_sum;
+x_centered = x_vals - x_mean;
+y_centered = y_vals - y_mean;
+cov_xx = sum(weights .* x_centered.^2) / w_sum;
+cov_xy = sum(weights .* x_centered .* y_centered) / w_sum;
+cov_yy = sum(weights .* y_centered.^2) / w_sum;
+C = [cov_xx, cov_xy; cov_xy, cov_yy];
+[V, D] = eig(C);
+eigvals = diag(D);
+if any(~isfinite(eigvals)) || min(eigvals) <= 0
+    anisotropy_ratio = NaN;
+    dominant_orientation_deg = NaN;
+    return;
+end
+[major_val, idx_major] = max(eigvals);
+minor_val = min(eigvals);
+major_vec = V(:, idx_major);
+anisotropy_ratio = sqrt(major_val / minor_val);
+dominant_orientation_deg = mod(rad2deg(atan2(major_vec(2), major_vec(1))), 180);
 end
 
 function [nn1_um, nn2_um, nn3_um, neighbor_distance_matrix_um] = computeNeighborShellDistances(centroids_px, xy_um_per_px)
@@ -978,6 +1232,10 @@ tabbed_fig.tabs.voronoi = uitab(tg, 'Title', 'Voronoi Density');
 tabbed_fig.tabs.neighbors = uitab(tg, 'Title', 'Neighbor Shells');
 tabbed_fig.tabs.pair = uitab(tg, 'Title', 'Pair Distribution');
 tabbed_fig.tabs.bond = uitab(tg, 'Title', 'Bond Angles');
+tabbed_fig.tabs.acf2d = uitab(tg, 'Title', 'ACF 2D');
+tabbed_fig.tabs.acfRadial = uitab(tg, 'Title', 'ACF Radial');
+tabbed_fig.tabs.acfCuts = uitab(tg, 'Title', 'ACF Cuts');
+tabbed_fig.tabs.acfCompare = uitab(tg, 'Title', 'ACF vs g(r)');
 end
 
 function drawVoronoiCells(ax, voronoi_polygons_px, valid_flag, area_values)
