@@ -18,6 +18,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         MinObjectAreaField matlab.ui.control.NumericEditField
         MinDepthField matlab.ui.control.NumericEditField
         StatusTextArea matlab.ui.control.TextArea
+        LaunchLegacyRoughnessButton matlab.ui.control.Button
     end
 
     methods (Access = private)
@@ -29,6 +30,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 '3. Select modules and options'
                 '4. If using reflection correction, pick a fill threshold'
                 '5. Click Run Analysis'
+                '6. Or click Launch Legacy Roughness GUI for manual ROI measurements'
                 };
         end
 
@@ -162,6 +164,44 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             end
         end
 
+        function onLaunchLegacyRoughness(app, ~, ~)
+            try
+                inputPath = char(app.InputEditField.Value);
+                outputDir = char(app.OutputEditField.Value);
+                if strlength(inputPath) == 0
+                    uialert(app.UIFigure, 'Choose an input .vk4 file first.', 'Missing Input');
+                    return;
+                end
+                if strlength(outputDir) == 0
+                    uialert(app.UIFigure, 'Choose an output folder first.', 'Missing Output');
+                    return;
+                end
+
+                app.StatusTextArea.Value = {
+                    'Preparing legacy roughness GUI...'
+                    ['Input: ' inputPath]
+                    ['Output: ' outputDir]
+                    'Loading the height surface directly from the selected VK4 file.'
+                    };
+                drawnow;
+
+                legacyResults = legacySurfaceRoughnessGUI(inputPath, outputDir); %#ok<NASGU>
+
+                app.StatusTextArea.Value = {
+                    'Legacy roughness GUI closed.'
+                    ['Input: ' inputPath]
+                    ['Output: ' outputDir]
+                    'Saved legacy roughness outputs if you clicked Done in the GUI.'
+                    };
+            catch ME
+                app.StatusTextArea.Value = {
+                    'Legacy roughness GUI launch failed.'
+                    ME.message
+                    };
+                uialert(app.UIFigure, ME.message, 'Legacy Roughness GUI Error', 'Interpreter', 'none');
+            end
+        end
+
         function createComponents(app)
             app.UIFigure = uifigure('Name', 'SOLF VK4 Analysis App', 'Position', [100 100 900 680]);
             app.Grid = uigridlayout(app.UIFigure, [13 4]);
@@ -244,6 +284,12 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             lbl.Layout.Row = 10; lbl.Layout.Column = 1;
             app.StatusTextArea = uitextarea(app.Grid, 'Editable', 'off');
             app.StatusTextArea.Layout.Row = 11; app.StatusTextArea.Layout.Column = [1 4];
+
+            app.LaunchLegacyRoughnessButton = uibutton(app.Grid, 'push', ...
+                'Text', 'Launch Legacy Roughness GUI');
+            app.LaunchLegacyRoughnessButton.Layout.Row = 13;
+            app.LaunchLegacyRoughnessButton.Layout.Column = [1 2];
+            app.LaunchLegacyRoughnessButton.ButtonPushedFcn = @(src, event) app.onLaunchLegacyRoughness(src, event);
 
             btnRun = uibutton(app.Grid, 'push', 'Text', 'Run Analysis', 'FontWeight', 'bold');
             btnRun.Layout.Row = 13; btnRun.Layout.Column = [3 4];
