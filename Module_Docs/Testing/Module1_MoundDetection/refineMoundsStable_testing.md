@@ -54,7 +54,9 @@ The function should let the user correct imperfect automatic mound counts while 
 ## Unresolved Risks Or Competing Options
 - Because this workflow is interactive, full testing requires visual review on representative VK4 files.
 - If count correction alone is insufficient, the next candidate is threshold-robust scoring or an alternate detector.
-- If this behavior is promoted, `analyzeMounds` should be aligned with the same raw-image pit-threshold behavior.
+- Follow-up: `analyzeMounds` should be reviewed for alignment with the same raw-image pit-threshold behavior.
 
 ## Promotion Status
-testing
+approved for finalization
+
+Finalization note: promoted to the finalized Module 1 methodology on 2026-05-15. This testing document remains as the historical tuning record.

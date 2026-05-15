@@ -2,6 +2,8 @@
 
 `refineMounds` is the user-guided follow-up to `autoTuneMounds`. It lets you adjust the detection target if the automatic detection does not look right.
 
+For the finalized repeatable workflow, see [refineMoundsStable_outputs.md](refineMoundsStable_outputs.md).
+
 ## Output
 
 | Output | What is measured | What it means physically |

@@ -73,9 +73,11 @@ The scale-locked morphology hypothesis is that `gaussSigma` and `openRadius` sho
 - Initial VK4 sweep showed the original `h_seed` floor of `0.01` was too permissive, so the diagnostic floor is currently `0.04`.
 - Candidate target diagnostics currently include the geometric mean, conservative p99 count, p95/p99 weighted count, seed/geometric ratio, a proposed over-seeding rule target, and the broad count band used for scoring.
 - A future version may need robustness scoring under small crops, shifts, or intensity perturbations.
-- If this raw-image fill-threshold behavior is promoted, `analyzeMounds` should be updated to match so final analysis uses the same pit mask as stable tuning.
+- Follow-up: `analyzeMounds` should be reviewed for alignment with the stable raw-image fill-threshold behavior so final analysis and stable tuning use the same pit mask logic.
 - A future version may test a scale-aware peak detector or watershed-style detector if the current morphology pipeline remains too degenerate.
 - Saved approved parameter sets by file hash may still be useful for locked reanalysis workflows.
 
 ## Promotion Status
-testing
+approved for finalization
+
+Finalization note: promoted to the finalized Module 1 methodology on 2026-05-15. This testing document remains as the historical tuning record.
