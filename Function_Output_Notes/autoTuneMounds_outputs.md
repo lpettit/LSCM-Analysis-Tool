@@ -2,6 +2,8 @@
 
 `autoTuneMounds` searches for mound-detection parameters automatically using Bayesian optimization.
 
+For the finalized repeatable workflow, see [autoTuneMoundsStable_outputs.md](autoTuneMoundsStable_outputs.md).
+
 ## Output
 
 | Output | What is measured | What it means physically |

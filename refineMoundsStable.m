@@ -3,11 +3,10 @@ function bestParams = refineMoundsStable(imagePath, fillDeepPits, fillThreshold,
 % =========================================================================
 %  refineMounds  —  Tiered guided refinement of mound detection parameters
 %
-%  Run this after autoTuneMoundsStable if the automatic result is unsatisfactory.
-%  Implements three tiers of increasing user involvement:
+%  Runs stable automatic mound tuning first when no initial parameter table
+%  is provided, then shows the initial centroid and spacing review figure.
 %
-%  Tier 1 (automatic):  Already done by autoTuneMoundsStable. refineMoundsStable starts
-%                       at Tier 2.
+%  Tier 1 (automatic):  Stable scale-locked automatic tuning.
 %
 %  Tier 2 (directional nudge):  Shows detection overlay. User says
 %                                "too few", "about right", or "too many".
@@ -20,11 +19,11 @@ function bestParams = refineMoundsStable(imagePath, fillDeepPits, fillThreshold,
 %                           Repeats until user is satisfied.
 %
 %  USAGE:
-%    % After autoTuneMounds returns unsatisfactory result:
-%    bestParams = autoTuneMoundsStable('img.vk4', false, 0.3, 3, 20);
-%    bestParams = refineMoundsStable('img.vk4', false, 0.3, 3, 20, bestParams, n_mid)
+%    % Recommended interactive workflow:
+%    bestParams = refineMoundsStable('img.vk4', false, 0.3, 3, 20)
 %
-%    % n_mid comes from autoTuneMounds console output (geometric mean target)
+%    % Legacy refinement-only workflow:
+%    bestParams = refineMoundsStable('img.vk4', false, 0.3, 3, 20, initParams, n_mid)
 %    % Accepts .vk4 or image (.bmp/.tif/.png) — same file as autoTuneMounds.
 %
 %  INPUTS:
@@ -33,12 +32,13 @@ function bestParams = refineMoundsStable(imagePath, fillDeepPits, fillThreshold,
 %    fillThreshold - pit fill threshold (same as autoTuneMoundsStable)
 %    dilateRadius  - fixed dilation radius (same as autoTuneMoundsStable)
 %    minObjectArea - minimum blob area (same as autoTuneMoundsStable)
-%    initParams    - bestParams table from autoTuneMoundsStable (seed)
-%    n_mid_init    - geometric mean count target from autoTuneMoundsStable output
+%    initParams    - optional bestParams table from autoTuneMoundsStable
+%    n_mid_init    - optional geometric mean count target
 %    rngSeed       - optional fixed random seed for repeatable bayesopt passes
 %
 %  OUTPUT:
-%    bestParams    - refined parameter table, same format as autoTuneMoundsStable
+%    bestParams    - refined parameter table, same format as autoTuneMoundsStable,
+%                    saved as bestParams.mat beside the input image
 %
 %  FIXED: clipLimit = 0.02
 %  OPTIMIZED: morphScale, contrastMethod
@@ -49,11 +49,19 @@ CLIP_LIMIT  = 0.02;
 BASE_GAUSS_FRACTION = 0.08;
 BASE_OPEN_FRACTION = 0.05;
 REFINE_EVALS = 30;       % bayesopt evaluations per refinement pass
+INITIAL_EVALS = 60;      % bayesopt evaluations for standalone auto-tune
+TIER2_COUNT_WEIGHT = 1.25;
+TIER3_COUNT_WEIGHT = 2.0;
 MAX_NUDGES   = 3;        % max Tier 2 nudge attempts before escalating to Tier 3
 NUDGE_FACTOR = 1.3;      % multiplier when only one bracket bound is known
 COUNT_BAND_MARGIN = 0.10;
+if nargin < 6, initParams = []; end
 if nargin < 7, n_mid_init = []; end
 if nargin < 8 || isempty(rngSeed), rngSeed = 1; end
+if isnumeric(initParams) && isscalar(initParams) && isempty(n_mid_init)
+    INITIAL_EVALS = initParams;
+    initParams = [];
+end
 
 % --- Load image -----------------------------------------------------------
 % VK4 or image: detection pipeline only needs normalised [0,1] intensities.
@@ -115,8 +123,10 @@ fprintf('  seed diagnostic: h=%.3f  spaced=%d  seed/geometric=%.2f\n', ...
 fprintf('  initial scoring band: [%d, %d] mounds\n', countBand(1), countBand(2));
 
 % Ensure initParams has stable scale-locked fields.
-initParams = ensureScaleLockedParams(initParams, d_est0, CLIP_LIMIT, ...
-    BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION);
+if ~isempty(initParams)
+    initParams = ensureScaleLockedParams(initParams, d_est0, CLIP_LIMIT, ...
+        BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION);
+end
 
 % Hard guardrail (wide — only blocks catastrophic failures)
 n_min = 3;
@@ -124,10 +134,63 @@ n_max = imgH * imgW / 10^2;   % max 1 mound per 10x10 px patch
 
 % --- Search space (same as autoTuneMoundsStable, clipLimit fixed) ---------
 vars = [
-    optimizableVariable('morphScale',    [0.5, 2.0],  'Type', 'real')
+    optimizableVariable('morphScale',    [0.5, 3.0],  'Type', 'real')
     optimizableVariable('contrastMethod', {'none','histeq','adapthisteq'}, ...
                                           'Type', 'categorical')
 ];
+
+% --- Tier 1: standalone stable auto-tune when no seed params were passed --
+if isempty(initParams)
+    fprintf('\n========== Tier 1: Stable automatic tuning ==========\n');
+    fprintf('No initParams supplied. Running internal stable auto-tune (%d evaluations).\n', ...
+            INITIAL_EVALS);
+    fprintf('Using fixed optimizer RNG seed: %d\n', rngSeed);
+
+    auto_n_min = max(3, floor(n_mid_init * 0.1));
+    auto_n_max = ceil(n_mid_init * 15);
+
+    seed_morphScale = 1.0;
+    seedParams = deriveScaleLockedParams( ...
+        table(seed_morphScale, categorical({'histeq'}), ...
+        'VariableNames', {'morphScale','contrastMethod'}), ...
+        d_est0, CLIP_LIMIT, BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION);
+    seedPoint = seedParams(:, {'morphScale','contrastMethod'});
+
+    autoObj = @(p) scoreParams(I, p, auto_n_min, auto_n_max, n_mid_init, countBand, ...
+                               d_est0, CLIP_LIMIT, fillDeepPits, fillThreshold, ...
+                               dilateRadius, minObjectArea, 0.5, false);
+
+    seedScore = autoObj(seedPoint);
+    fprintf('Image-derived seed: morphScale=%.2f  sigma=%.2f  contrast=histeq  openR=%d\n', ...
+            seedParams.morphScale, seedParams.gaussSigma, seedParams.openRadius);
+    fprintf('Seed score: %.4f', seedScore);
+    if seedScore >= 0.6
+        fprintf(' (poor - falling back to broad exploration)\n');
+        seedPoint = [];
+    else
+        fprintf(' (good - seeding optimizer)\n');
+    end
+
+    bayesOpts = { ...
+        'MaxObjectiveEvaluations',   INITIAL_EVALS, ...
+        'AcquisitionFunctionName',   'expected-improvement-plus', ...
+        'IsObjectiveDeterministic',  true, ...
+        'Verbose',                   1, ...
+        'PlotFcn',                   []};
+    if ~isempty(seedPoint)
+        bayesOpts = [bayesOpts, {'InitialX', seedPoint}];
+    end
+
+    previousRngState = rng;
+    rng(rngSeed, 'twister');
+    cleanupRng = onCleanup(@() rng(previousRngState));
+    results = bayesopt(autoObj, vars, bayesOpts{:});
+    clear cleanupRng
+
+    initParams = selectStableBestParams(results, I, auto_n_min, auto_n_max, n_mid_init, countBand, ...
+        d_est0, CLIP_LIMIT, fillDeepPits, fillThreshold, dilateRadius, minObjectArea, ...
+        BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION, 0.5, false);
+end
 
 % --- State for binary search bracket ------------------------------------
 % n_lo: highest count user said was "too few"   (lower bound on true count)
@@ -137,6 +200,7 @@ n_hi      = Inf;    % unknown upper bound initially
 n_mid     = n_mid_init;
 bestParams = initParams;
 nudge_count = 0;
+skipTier3InitialOverlay = false;
 
 fprintf('\n========== refineMoundsStable ==========\n');
 fprintf('Starting from n_mid = %.0f\n', n_mid);
@@ -176,10 +240,12 @@ while nudge_count <= MAX_NUDGES
         fprintf('\nRefinement complete. Final count: %d mounds\n', n_current);
         fprintf('Final params: morphScale=%.2f  sigma=%.2f  contrast=%s  openR=%d\n', ...
                 bestParams.morphScale, bestParams.gaussSigma, char(bestParams.contrastMethod), bestParams.openRadius);
+        saveBestParams(imagePath, bestParams);
         return;
 
     elseif response == 4
         % Escalate to Tier 3
+        skipTier3InitialOverlay = true;
         break;
 
     else
@@ -227,7 +293,7 @@ while nudge_count <= MAX_NUDGES
         % Tier 2: broad plausible-count band, matching autoTuneMoundsStable.
         obj = @(p) scoreParams(I, p, n_min, n_max, n_mid, countBand, d_est0, CLIP_LIMIT, ...
                                fillDeepPits, fillThreshold, dilateRadius, minObjectArea, ...
-                               0.5, false);
+                               TIER2_COUNT_WEIGHT, false);
 
         previousRngState = rng;
         rng(rngSeed + nudge_count, 'twister');
@@ -243,7 +309,7 @@ while nudge_count <= MAX_NUDGES
 
         bestParams_new      = selectStableBestParams(results, I, n_min, n_max, n_mid, countBand, d_est0, ...
             CLIP_LIMIT, fillDeepPits, fillThreshold, dilateRadius, minObjectArea, ...
-            BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION, 0.5, false);
+            BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION, TIER2_COUNT_WEIGHT, false);
         bestParams          = bestParams_new;
 
         fprintf('  Done. New params: morphScale=%.2f  sigma=%.2f  contrast=%s  openR=%d\n', ...
@@ -260,11 +326,15 @@ fprintf('This becomes the optimization target directly.\n');
 fprintf('Type 0 at any point to accept the current result.\n\n');
 
 while true
-    [~, centroids] = runPipeline(I, bestParams, fillDeepPits, fillThreshold, ...
-                                  dilateRadius, minObjectArea);
-    n_current = size(centroids, 1);
+    if skipTier3InitialOverlay
+        skipTier3InitialOverlay = false;
+    else
+        [~, centroids] = runPipeline(I, bestParams, fillDeepPits, fillThreshold, ...
+                                      dilateRadius, minObjectArea);
+        n_current = size(centroids, 1);
 
-    showOverlay(I, centroids, bestParams, n_current, n_mid, -1);
+        showOverlay(I, centroids, bestParams, n_current, n_mid, -1);
+    end
 
     fprintf('Current detection: %d mounds\n', n_current);
     user_count = input('Enter expected count (or 0 to accept current result): ');
@@ -273,6 +343,7 @@ while true
         fprintf('\nAccepted. Final count: %d mounds\n', n_current);
         fprintf('Final params: morphScale=%.2f  sigma=%.2f  contrast=%s  openR=%d\n', ...
                 bestParams.morphScale, bestParams.gaussSigma, char(bestParams.contrastMethod), bestParams.openRadius);
+        saveBestParams(imagePath, bestParams);
         return;
     end
 
@@ -290,7 +361,7 @@ while true
     % to the score, comfortably overriding any CV advantage from merging.
     obj = @(p) scoreParams(I, p, n_min, n_max, n_mid, manualCountBand, d_est0, CLIP_LIMIT, ...
                            fillDeepPits, fillThreshold, dilateRadius, minObjectArea, ...
-                           2.0, true);
+                           TIER3_COUNT_WEIGHT, true);
 
     previousRngState = rng;
     rng(rngSeed + 100 + round(n_mid), 'twister');
@@ -306,7 +377,7 @@ while true
 
     bestParams_new           = selectStableBestParams(results, I, n_min, n_max, n_mid, manualCountBand, d_est0, ...
         CLIP_LIMIT, fillDeepPits, fillThreshold, dilateRadius, minObjectArea, ...
-        BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION, 2.0, true);
+        BASE_GAUSS_FRACTION, BASE_OPEN_FRACTION, TIER3_COUNT_WEIGHT, true);
     bestParams               = bestParams_new;
 
     fprintf('  Done. New params: morphScale=%.2f  sigma=%.2f  contrast=%s  openR=%d\n', ...
@@ -330,9 +401,12 @@ function showOverlay(I, centroids, bestParams, n_current, n_mid, tier)
         plot(centroids(:,1), centroids(:,2), 'r+', ...
              'MarkerSize', 6, 'LineWidth', 1.0);
     end
-    if tier >= 0
+    if tier == 0
+        title(sprintf('Tier 1 automatic detection  |  %d mounds detected  |  target ~%.0f', ...
+              n_current, n_mid), 'Color', 'w', 'FontSize', 9);
+    elseif tier > 0
         title(sprintf('Tier 2 nudge #%d  |  %d mounds detected  |  target ~%.0f', ...
-              tier+1, n_current, n_mid), 'Color', 'w', 'FontSize', 9);
+              tier, n_current, n_mid), 'Color', 'w', 'FontSize', 9);
     else
         title(sprintf('Tier 3  |  %d mounds detected  |  target %.0f', ...
               n_current, n_mid), 'Color', 'w', 'FontSize', 9);
@@ -402,6 +476,17 @@ function val = getValidInput(prompt, valid_vals)
             fprintf('  Please enter one of: %s\n', num2str(valid_vals));
         end
     end
+end
+
+
+% =========================================================================
+%  SAVE FINAL PARAMETERS
+% =========================================================================
+function saveBestParams(imagePath, bestParams)
+    imageFolder = fileparts(imagePath);
+    savePath = fullfile(imageFolder, 'bestParams.mat');
+    save(savePath, 'bestParams');
+    fprintf('Saved bestParams to %s\n', savePath);
 end
 
 
@@ -497,7 +582,7 @@ function p = ensureScaleLockedParams(p, d_est0, clipLimit, baseGaussFraction, ba
     names = p.Properties.VariableNames;
     if ~ismember('morphScale', names)
         if ismember('gaussSigma', names)
-            p.morphScale = max(0.5, min(2.0, double(p.gaussSigma) / (d_est0 * baseGaussFraction)));
+            p.morphScale = max(0.5, min(3.0, double(p.gaussSigma) / (d_est0 * baseGaussFraction)));
         else
             p.morphScale = 1;
         end
@@ -527,6 +612,9 @@ function bestParams = selectStableBestParams(results, I, n_min, n_max, n_mid, co
     candidateParams = results.XTrace;
     nCandidates = height(candidateParams);
     scores = NaN(nCandidates, 1);
+    nDetected = NaN(nCandidates, 1);
+    cvs = NaN(nCandidates, 1);
+    countBandDeltas = NaN(nCandidates, 1);
     morphScales = NaN(nCandidates, 1);
     gaussSigmas = NaN(nCandidates, 1);
     openRadii = NaN(nCandidates, 1);
@@ -534,8 +622,11 @@ function bestParams = selectStableBestParams(results, I, n_min, n_max, n_mid, co
     for k = 1:nCandidates
         p = deriveScaleLockedParams(candidateParams(k, :), d_est0, clipLimit, ...
             baseGaussFraction, baseOpenFraction);
-        scores(k) = scoreParams(I, p, n_min, n_max, n_mid, countBand, d_est0, clipLimit, ...
+        [scores(k), metrics] = scoreParams(I, p, n_min, n_max, n_mid, countBand, d_est0, clipLimit, ...
             fillDeepPits, fillThreshold, dilateRadius, minObjectArea, countWeight, linearPenalty);
+        nDetected(k) = metrics.n;
+        cvs(k) = metrics.cv;
+        countBandDeltas(k) = max([countBand(1) - nDetected(k), 0, nDetected(k) - countBand(2)]);
         morphScales(k) = p.morphScale;
         gaussSigmas(k) = p.gaussSigma;
         openRadii(k) = p.openRadius;
@@ -556,15 +647,17 @@ function bestParams = selectStableBestParams(results, I, n_min, n_max, n_mid, co
 
     ranking = table( ...
         scores(nearTieIdx), ...
+        countBandDeltas(nearTieIdx), ...
+        cvs(nearTieIdx), ...
         abs(morphScales(nearTieIdx) - 1), ...
         contrastRank(nearTieIdx), ...
         morphScales(nearTieIdx), ...
         gaussSigmas(nearTieIdx), ...
         openRadii(nearTieIdx), ...
         nearTieIdx, ...
-        'VariableNames', {'Score','ScaleDelta','ContrastRank','MorphScale','GaussSigma','OpenRadius','OriginalIndex'});
+        'VariableNames', {'Score','CountBandDelta','CV','ScaleDelta','ContrastRank','MorphScale','GaussSigma','OpenRadius','OriginalIndex'});
 
-    ranking = sortrows(ranking, {'Score','ScaleDelta','ContrastRank','MorphScale','GaussSigma','OpenRadius','OriginalIndex'});
+    ranking = sortrows(ranking, {'Score','CountBandDelta','CV','ScaleDelta','ContrastRank','MorphScale','GaussSigma','OpenRadius','OriginalIndex'});
     selectedIdx = ranking.OriginalIndex(1);
     bestParams = deriveScaleLockedParams(candidateParams(selectedIdx, :), d_est0, clipLimit, ...
         baseGaussFraction, baseOpenFraction);
@@ -590,22 +683,26 @@ end
 % =========================================================================
 %  SCORING
 % =========================================================================
-function score = scoreParams(I, p, n_min, n_max, n_mid, countBand, d_est0, clipLimit, ...
+function [score, metrics] = scoreParams(I, p, n_min, n_max, n_mid, countBand, d_est0, clipLimit, ...
                               fillDeepPits, fillThreshold, dilateRadius, minObjectArea, ...
                               count_weight, linear_penalty)
 % count_weight:   weight applied to count penalty (0.5 for Tier 2, 2.0 for Tier 3)
 % linear_penalty: if true, use |log(n/n_mid)| (sharper); else log(n/n_mid)^2 (softer)
     if nargin < 13, count_weight   = 0.5;  end
     if nargin < 14, linear_penalty = false; end
+    metrics = struct('n', NaN, 'cv', NaN, 'countPenalty', NaN, 'score', NaN);
 
     try
         p = deriveScaleLockedParams(p, d_est0, clipLimit, 0.08, 0.05);
         [~, centroids] = runPipeline(I, p, fillDeepPits, fillThreshold, ...
                                       dilateRadius, minObjectArea);
         n = size(centroids, 1);
+        metrics.n = n;
 
         if n < n_min || n > n_max
-            score = 100; return;
+            score = 100;
+            metrics.score = score;
+            return;
         end
 
         dt    = delaunayTriangulation(centroids(:,1), centroids(:,2));
@@ -633,10 +730,14 @@ function score = scoreParams(I, p, n_min, n_max, n_mid, countBand, d_est0, clipL
         end
 
         score = cv + count_weight * count_penalty;
+        metrics.cv = cv;
+        metrics.countPenalty = count_penalty;
+        metrics.score = score;
 
     catch ME
         warning('scoreParams:pipelineError', '%s', ME.message);
         score = 100;
+        metrics.score = score;
     end
 end
 
