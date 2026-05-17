@@ -1,6 +1,9 @@
 # Module 3: Mound Shape And Roughness
 
-See also: [analyzeMoundShape_outputs.md](../Function_Output_Notes/analyzeMoundShape_outputs.md)
+See also:
+
+- [analyzeMoundShape_outputs.md](../Function_Output_Notes/analyzeMoundShape_outputs.md)
+- [legacySurfaceRoughnessGUI_outputs.md](../Function_Output_Notes/legacySurfaceRoughnessGUI_outputs.md)
 
 ## 1. Module Purpose And Scientific Questions Answered
 Module 3 is the main mound-centric morphology and height-interpretation module.
@@ -14,6 +17,8 @@ It is designed to answer questions such as:
 - How do whole-surface height slices evolve as the threshold plane moves through the surface?
 
 Module 3 is also the module where scientific interpretation choices matter most, because different peak, base, valley, or footprint definitions can produce substantially different physical stories.
+
+Module 3 also has a finalized companion manual-comparison workflow through `legacySurfaceRoughnessGUI.m`, which reproduces a legacy VK-style ROI roughness measurement path for side-by-side validation against the newer automated interpretation path.
 
 ## 2. Inputs, Dependencies, And Upstream Assumptions
 Primary entry point:
@@ -41,10 +46,11 @@ Because Module 3 is broad, the most useful first-pass reading order is:
 
 1. preferred interpretation path
 2. global reference and roughness context
-3. direct mound-height workflow
-4. footprint/body-shape workflow
-5. whole-image height-slice workflow
-6. figure guide
+3. legacy manual-comparison workflow
+4. direct mound-height workflow
+5. footprint/body-shape workflow
+6. whole-image height-slice workflow
+7. figure guide
 
 ### Current preferred interpretation path
 At the current finalized state:
@@ -54,6 +60,17 @@ At the current finalized state:
 - footprint/body-shape geometry uses the watershed-restricted `Q50` half-max definition
 
 The output-note page is the faster lookup layer for specific fields within that preferred path.
+
+### Finalized companion legacy roughness workflow
+The finalized legacy comparison tool is:
+
+- `legacySurfaceRoughnessGUI.m`
+
+It is meant for:
+
+- validating the current pipeline against a manual legacy-style ROI workflow
+- comparing automated Module 3 roughness summaries against manually placed windows
+- reproducing a user-driven roughness workflow at the start of the app path without requiring Module 1 outputs first
 
 ## 4. Calculation Workflow
 ### 4.1 Establish a whole-image vertical reference context
@@ -161,6 +178,25 @@ Current whole-image slice outputs include:
 
 These are intended to help interpret the surface as a full topographic population, not only as a collection of isolated mound objects.
 
+### 4.10 Companion legacy ROI roughness comparison workflow
+The finalized companion legacy workflow uses the same raw height surface but replaces automated per-mound logic with manually placed ROIs.
+
+Current finalized behavior:
+
+- the tool can be launched directly from a `.vk4` file or from an existing analysis struct
+- the displayed surface uses a rainbow-style `jet` colormap to mimic the legacy user experience
+- the user can place up to 20 ROIs using:
+  - `All areas`
+  - `Rect.`
+  - `Square`
+  - `Area`
+- all ROI roughness values are measured against the whole-image global reference plane:
+  - `Rp = max(Z_roi) - refPlane`
+  - `Rv = refPlane - min(Z_roi)`
+  - `Rz = Rp + Rv`
+- the tool reports ROI-level values plus mean and standard deviation across the stored windows
+- the workflow is finalized as a comparison/validation path, not as a replacement for the preferred automated Module 3 interpretation path
+
 ## 5. Analysis Groups Within The Workflow
 ### Global reference and roughness context
 This group defines the vertical framing of the module and supports roughness-style interpretation.
@@ -173,6 +209,9 @@ This group focuses on what lateral mound body should be measured and how its siz
 
 ### Whole-surface morphology workflow
 This group characterizes how the entire surface cross section evolves with height threshold.
+
+### Legacy manual-comparison workflow
+This group provides a finalized manual ROI roughness path for comparison against the preferred automated Module 3 outputs.
 
 ### Diagnostic and provenance workflow
 This group stores the geometry and figures needed to judge whether the preferred interpretation remains scientifically sensible.
@@ -195,11 +234,19 @@ For most downstream work, start with:
 - `whole_image_*`
   - whole-surface threshold-evolution descriptors
 
+For legacy comparison work, use:
+
+- `legacySurfaceRoughnessGUI`
+  - when you want manual ROI placement on the full surface
+- the saved legacy summary values
+  - when you want direct comparison between manual ROI roughness and automated Module 3 roughness framing
+
 Interpretation cautions:
 
 - roughness-style `Rz` and direct mound height are related but not identical concepts
 - percentile-based heights are not competing errors; they are alternative local-base interpretations
 - footprint/body metrics depend strongly on the chosen body-defining plane
+- the finalized legacy ROI tool is a comparison workflow and should not automatically be treated as the preferred replacement for the automated Module 3 path
 
 ## 7. Assumptions, Choices, And Why They Were Made
 - Method B is preferred for roughness-style valley interpretation because it tracks a local spacing-informed valley environment.
@@ -208,6 +255,7 @@ Interpretation cautions:
 - The preferred footprint/body-shape plane is the watershed-restricted `Q50` half-max definition because it was judged more physically representative than the reviewed alternatives.
 - The percentile base family is preserved because one scalar base can hide real asymmetry between open and crowded mound sides.
 - Whole-image slice morphology is retained because the surface can carry meaningful information that is not captured fully by per-mound summary metrics alone.
+- The legacy ROI roughness GUI is retained as a finalized comparison tool because manual operator-placed windows remain useful for validating the newer automated roughness interpretation path.
 
 ## 8. Diagnostics And Figure Guide
 ### `*_roughness_hist.png`
@@ -339,3 +387,4 @@ Interpretation cautions:
 
 ## 10. Change Log For Finalized Methodology
 - 2026-05-08: Created the long-form finalized Module 3 scientific-methods document and aligned it with the current preferred interpretation path and output-note layer.
+- 2026-05-11: Promoted the legacy VK-style ROI roughness comparison workflow to finalized status and linked it into the Module 3 methodology as a companion manual-validation path.
