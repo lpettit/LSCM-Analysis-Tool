@@ -34,6 +34,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         ManualCountField matlab.ui.control.NumericEditField
         ManualCountButton matlab.ui.control.Button
         StatusTextArea matlab.ui.control.TextArea
+        LaunchLegacyRoughnessButton matlab.ui.control.Button
     end
 
     properties (Access = private)
@@ -472,6 +473,42 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             if ischar(current), current = {current}; end
             app.StatusTextArea.Value = [current; {msg}];
             drawnow;
+        function onLaunchLegacyRoughness(app, ~, ~)
+            try
+                inputPath = char(app.InputEditField.Value);
+                outputDir = char(app.OutputEditField.Value);
+                if strlength(inputPath) == 0
+                    uialert(app.UIFigure, 'Choose an input .vk4 file first.', 'Missing Input');
+                    return;
+                end
+                if strlength(outputDir) == 0
+                    uialert(app.UIFigure, 'Choose an output folder first.', 'Missing Output');
+                    return;
+                end
+
+                app.StatusTextArea.Value = {
+                    'Preparing legacy roughness GUI...'
+                    ['Input: ' inputPath]
+                    ['Output: ' outputDir]
+                    'Loading the height surface directly from the selected VK4 file.'
+                    };
+                drawnow;
+
+                legacyResults = legacySurfaceRoughnessGUI(inputPath, outputDir); %#ok<NASGU>
+
+                app.StatusTextArea.Value = {
+                    'Legacy roughness GUI closed.'
+                    ['Input: ' inputPath]
+                    ['Output: ' outputDir]
+                    'Saved legacy roughness outputs if you clicked Done in the GUI.'
+                    };
+            catch ME
+                app.StatusTextArea.Value = {
+                    'Legacy roughness GUI launch failed.'
+                    ME.message
+                    };
+                uialert(app.UIFigure, ME.message, 'Legacy Roughness GUI Error', 'Interpreter', 'none');
+            end
         end
 
         function createComponents(app)
