@@ -1,4 +1,4 @@
-function spatialOrderResults = analyzeSpatialOrder(m1, outputDir)
+cleasfunction spatialOrderResults = analyzeSpatialOrder(m1, outputDir)
 % =========================================================================
 %  analyzeSpatialOrder  -  Module 4: Spatial order, pair distribution,
 %                          and lightweight local disorder diagnostics

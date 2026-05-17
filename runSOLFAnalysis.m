@@ -34,15 +34,26 @@ if ~needM1
     return;
 end
 
-fprintf('  Tuning mound detection...\n');
-bestParams = autoTuneMounds(config.inputPath, config.fillDeepPits, config.fillThreshold, ...
-    config.dilateRadius, config.minObjectArea, config.autoTuneMaxEvals, config.showAutoTunePlots);
+if ~isempty(config.bestParamsPath)
+    fprintf('  Loading existing mound detection parameters...\n');
+    bestParamsFile = load(config.bestParamsPath, 'bestParams');
+    if ~isfield(bestParamsFile, 'bestParams')
+        error('runSOLFAnalysis:MissingBestParams', ...
+            'bestParamsPath must point to a .mat file containing bestParams: %s', ...
+            config.bestParamsPath);
+    end
+    bestParams = bestParamsFile.bestParams;
+else
+    fprintf('  Tuning mound detection...\n');
+    bestParams = autoTuneMounds(config.inputPath, config.fillDeepPits, config.fillThreshold, ...
+        config.dilateRadius, config.minObjectArea, config.autoTuneMaxEvals, config.showAutoTunePlots);
 
-if config.useRefineMounds
-    fprintf('  Launching refineMounds for additional user control...\n');
-    n_mid_hint = estimateMoundTarget(config.inputPath);
-    bestParams = refineMounds(config.inputPath, config.fillDeepPits, config.fillThreshold, ...
-        config.dilateRadius, config.minObjectArea, bestParams, n_mid_hint);
+    if config.useRefineMounds
+        fprintf('  Launching refineMounds for additional user control...\n');
+        n_mid_hint = estimateMoundTarget(config.inputPath);
+        bestParams = refineMounds(config.inputPath, config.fillDeepPits, config.fillThreshold, ...
+            config.dilateRadius, config.minObjectArea, bestParams, n_mid_hint);
+    end
 end
 
 runResults.bestParams = bestParams;
@@ -83,6 +94,7 @@ defaults = struct( ...
     'autoTuneMaxEvals', 60, ...
     'showAutoTunePlots', true, ...
     'useRefineMounds', false, ...
+    'bestParamsPath', '', ...
     'minDepthUm', 2.0);
 
 fields = fieldnames(defaults);

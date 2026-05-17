@@ -12,6 +12,12 @@
 | `cavResults` | Full Module 2 results struct from `analyzeCavities`, if Module 2 was selected. | This contains the cavity/depression measurements for the same surface. |
 | `moundResults` | Full Module 3 results struct from `analyzeMoundShape`, if Module 3 was selected. | This contains the mound height, footprint, and morphology measurements for the same surface. |
 
+## Relevant config fields
+
+| Field | What it controls | Operational meaning |
+| --- | --- | --- |
+| `bestParamsPath` | Optional path to an existing `.mat` file containing `bestParams`. | When supplied, the workflow loads existing mound-detection parameters instead of tuning them again before running selected modules. |
+
 ## Physical interpretation
 
 This function is not a measurement algorithm by itself. It packages the outputs of several measurement algorithms into one reproducible run record.
