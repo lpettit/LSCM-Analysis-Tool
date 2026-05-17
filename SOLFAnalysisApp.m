@@ -473,6 +473,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             if ischar(current), current = {current}; end
             app.StatusTextArea.Value = [current; {msg}];
             drawnow;
+        end
+
         function onLaunchLegacyRoughness(app, ~, ~)
             try
                 inputPath = char(app.InputEditField.Value);
@@ -557,6 +559,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.MoundSurfaceButton = uibutton(app.LeftGrid, 'push', 'Text', '3. Mound/Surface Analysis');
             app.SpatialAnalysisButton = uibutton(app.LeftGrid, 'push', 'Text', '4. Spatial Analysis');
             app.LegacyRoughnessButton = uibutton(app.LeftGrid, 'push', 'Text', '5. Legacy Roughness Measurement');
+            app.LegacyRoughnessButton.ButtonPushedFcn = @(src, event) app.onLaunchLegacyRoughness(src, event);
 
             app.DividerPanel = uipanel(app.MainGrid, 'BorderType', 'none', 'BackgroundColor', [0.55 0.55 0.55]);
             app.DividerPanel.Layout.Row = 1;
