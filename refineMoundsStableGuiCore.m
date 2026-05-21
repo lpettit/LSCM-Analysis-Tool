@@ -52,7 +52,7 @@ constants = struct( ...
 logFcn('Loading image for GUI mound detection...');
 [I, imgH, imgW] = loadDetectionImage(imagePath);
 
-[d_est0, n_p90, n_p95, n_p99, n_geom, n_weighted_p95_p99, seedDiag] = ...
+[d_est0, n_p90, n_p95, n_p99, n_geom, n_weighted_p95_p99, seedDiag, scaleDiag] = ...
     estimateCountSetup(I, imgH, imgW, fillDeepPits, fillThreshold);
 seedOverGeom = seedDiag.nAfterSpacing / max(n_geom, eps);
 seedBandCandidates = [];
@@ -61,6 +61,7 @@ if seedOverGeom <= 1.5
 end
 countBand = buildPlausibleCountBand(n_p99, n_weighted_p95_p99, n_geom, ...
     seedBandCandidates, constants.COUNT_BAND_MARGIN);
+scaleBounds = estimateAdaptiveScaleBounds(scaleDiag, seedDiag, n_geom, imgH, imgW);
 
 logFcn('refineMoundsStable GUI count setup:');
 logFcn(sprintf('  distance targets: p90=%.0f  p95=%.0f  p99=%.0f  geometric=%.0f', ...
@@ -68,6 +69,13 @@ logFcn(sprintf('  distance targets: p90=%.0f  p95=%.0f  p99=%.0f  geometric=%.0f
 logFcn(sprintf('  seed diagnostic: h=%.3f  spaced=%d  seed/geometric=%.2f', ...
     seedDiag.hSeed, seedDiag.nAfterSpacing, seedOverGeom));
 logFcn(sprintf('  initial scoring band: [%d, %d] mounds', countBand(1), countBand(2)));
+logFcn(sprintf('  scale confidence: %s  spacing spread=%.2f  seed spacing ratio=%.2f', ...
+    char(scaleBounds.confidence), scaleBounds.spacingSpread, scaleBounds.seedSpacingRatio));
+logFcn(sprintf('  adaptive morphScale bounds: [%.2f, %.2f]', ...
+    scaleBounds.morphScaleBounds(1), scaleBounds.morphScaleBounds(2)));
+logFcn(sprintf('  derived sigma range: [%.2f, %.2f] px  openRadius range: [%d, %d] px', ...
+    scaleBounds.gaussSigmaRange(1), scaleBounds.gaussSigmaRange(2), ...
+    scaleBounds.openRadiusRange(1), scaleBounds.openRadiusRange(2)));
 
 state = struct();
 state.imagePath = imagePath;
@@ -82,6 +90,9 @@ state.I = I;
 state.imgH = imgH;
 state.imgW = imgW;
 state.d_est0 = d_est0;
+state.scaleDiag = scaleDiag;
+state.scaleBounds = scaleBounds;
+state.morphScaleBounds = scaleBounds.morphScaleBounds;
 state.n_mid = n_geom;
 state.countBand = countBand;
 state.n_min = 3;
@@ -127,7 +138,7 @@ else
     state.logFcn(sprintf('Seed score: %.4f (good - seeding optimizer)', seedScore));
 end
 
-vars = buildOptimizableVariables();
+vars = buildOptimizableVariables(state.morphScaleBounds);
 bayesOpts = { ...
     'MaxObjectiveEvaluations', c.INITIAL_EVALS, ...
     'AcquisitionFunctionName', 'expected-improvement-plus', ...
@@ -250,7 +261,7 @@ obj = @(p) cachedScoreParams(evalCache, state.I, p, state.n_min, state.n_max, st
 previousRngState = rng;
 rng(rngSeed, 'twister');
 cleanupRng = onCleanup(@() rng(previousRngState));
-results = bayesopt(obj, buildOptimizableVariables(), ...
+results = bayesopt(obj, buildOptimizableVariables(state.morphScaleBounds), ...
     'MaxObjectiveEvaluations', c.REFINE_EVALS, ...
     'InitialX', seedRow, ...
     'AcquisitionFunctionName', 'expected-improvement-plus', ...
@@ -381,7 +392,7 @@ end
 I = double(I_raw) / 255;
 end
 
-function [d_est0, n_p90, n_p95, n_p99, n_geom, n_weighted_p95_p99, seedDiag] = ...
+function [d_est0, n_p90, n_p95, n_p99, n_geom, n_weighted_p95_p99, seedDiag, scaleDiag] = ...
     estimateCountSetup(I, imgH, imgW, fillDeepPits, fillThreshold)
 I_blur0 = imgaussfilt(I, 2.0);
 BW0 = imbinarize(I_blur0, graythresh(I_blur0));
@@ -404,11 +415,54 @@ d_est0 = d_p95;
 n_geom = (n_p90 * n_p95 * n_p99)^(1/3);
 n_weighted_p95_p99 = (n_p95 * n_p99^2)^(1/3);
 seedDiag = estimateSeedCountDiagnostic(I, d_est0, fillDeepPits, fillThreshold);
+scaleDiag = struct('d_p90', d_p90, 'd_p95', d_p95, 'd_p99', d_p99);
 end
 
-function vars = buildOptimizableVariables()
+function scaleBounds = estimateAdaptiveScaleBounds(scaleDiag, seedDiag, n_geom, imgH, imgW)
+seedSpacing = NaN;
+if isfield(seedDiag, 'nAfterSpacing') && seedDiag.nAfterSpacing > 0
+    seedSpacing = sqrt(imgH * imgW * 0.5 / seedDiag.nAfterSpacing);
+end
+
+dValues = [scaleDiag.d_p90, scaleDiag.d_p95, scaleDiag.d_p99];
+dValues = dValues(isfinite(dValues) & dValues > 0);
+spacingSpread = max(dValues) / max(min(dValues), eps);
+seedSpacingRatio = seedSpacing / max(scaleDiag.d_p95, eps);
+seedOverGeom = seedDiag.nAfterSpacing / max(n_geom, eps);
+
+if spacingSpread <= 1.35 && seedSpacingRatio >= 0.75 && seedSpacingRatio <= 1.35 && seedOverGeom <= 1.5
+    confidence = "high";
+    morphScaleBounds = [0.75, 1.60];
+elseif spacingSpread <= 1.80 && seedSpacingRatio >= 0.55 && seedSpacingRatio <= 1.80 && seedOverGeom <= 2.25
+    confidence = "moderate";
+    morphScaleBounds = [0.60, 2.20];
+else
+    confidence = "low";
+    morphScaleBounds = [0.50, 3.00];
+end
+
+baseGaussFraction = 0.08;
+baseOpenFraction = 0.05;
+gaussSigmaRange = max(0.5, min(15, scaleDiag.d_p95 * baseGaussFraction .* morphScaleBounds));
+openRadiusRange = max(1, min(25, round(scaleDiag.d_p95 * baseOpenFraction .* morphScaleBounds)));
+
+scaleBounds = struct( ...
+    'confidence', confidence, ...
+    'spacingSpread', spacingSpread, ...
+    'seedSpacing', seedSpacing, ...
+    'seedSpacingRatio', seedSpacingRatio, ...
+    'seedOverGeom', seedOverGeom, ...
+    'morphScaleBounds', morphScaleBounds, ...
+    'gaussSigmaRange', gaussSigmaRange, ...
+    'openRadiusRange', openRadiusRange);
+end
+
+function vars = buildOptimizableVariables(morphScaleBounds)
+if nargin < 1 || isempty(morphScaleBounds)
+    morphScaleBounds = [0.5, 3.0];
+end
 vars = [
-    optimizableVariable('morphScale', [0.5, 3.0], 'Type', 'real')
+    optimizableVariable('morphScale', morphScaleBounds, 'Type', 'real')
     optimizableVariable('contrastMethod', {'none','histeq','adapthisteq'}, ...
     'Type', 'categorical')
     ];
