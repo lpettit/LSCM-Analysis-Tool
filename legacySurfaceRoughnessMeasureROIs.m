@@ -17,8 +17,10 @@ refPlane_um = mean(Z(:), 'omitnan');
 Rp_global = max(Z(:)) - refPlane_um;
 Rv_global = refPlane_um - min(Z(:));
 Rz_global = Rp_global + Rv_global;
-[surface_area_global_um2, projected_area_global_um2, SA_to_A_ratio_global] = ...
-    calculateSurfaceAreaRatio(Z, xy_um_per_px);
+globalSurfaceMetrics = vkSurfaceAreaMetrics(Z, xy_um_per_px);
+surface_area_global_um2 = globalSurfaceMetrics.surfaceAreaUm2;
+projected_area_global_um2 = globalSurfaceMetrics.projectedAreaUm2;
+SA_to_A_ratio_global = globalSurfaceMetrics.ratio;
 
 perRoiTable = buildPerRoiTable(Z, xy_um_per_px, rois);
 n_rois = height(perRoiTable);
@@ -117,8 +119,10 @@ for i = 1:n
     Rp_um(i) = max(roiZ(:)) - refPlane_um;
     Rv_um(i) = refPlane_um - min(roiZ(:));
     Rz_um(i) = Rp_um(i) + Rv_um(i);
-    [surfaceAreaUm2(i), projectedAreaUm2(i), SA_to_A_ratio(i)] = ...
-        calculateSurfaceAreaRatio(roiZ, xy_um_per_px);
+    roiSurfaceMetrics = vkSurfaceAreaMetrics(roiZ, xy_um_per_px);
+    surfaceAreaUm2(i) = roiSurfaceMetrics.surfaceAreaUm2;
+    projectedAreaUm2(i) = roiSurfaceMetrics.projectedAreaUm2;
+    SA_to_A_ratio(i) = roiSurfaceMetrics.ratio;
 end
 
 perRoiTable = table(roiIndex, roiType, xMin, xMax, yMin, yMax, centerXpx, centerYpx, ...
@@ -129,66 +133,6 @@ perRoiTable = table(roiIndex, roiType, xMin, xMax, yMin, yMax, centerXpx, center
                       'Center_X_um', 'Center_Y_um', 'Width_um', 'Height_um', ...
                       'Rp_um', 'Rv_um', 'Rz_um', ...
                       'SurfaceArea_um2', 'ProjectedArea_um2', 'SA_to_A_ratio'});
-end
-
-function [surfaceAreaUm2, projectedAreaUm2, ratio] = calculateSurfaceAreaRatio(Zpatch, xy_um_per_px)
-% Approximate the VK Analyzer convention found during testing:
-% opposite-diagonal cell facets, full finite-pixel projected area, and
-% right/bottom edge extension.
-if size(Zpatch, 1) < 2 || size(Zpatch, 2) < 2
-    surfaceAreaUm2 = NaN;
-    projectedAreaUm2 = NaN;
-    ratio = NaN;
-    return;
-end
-
-dx = xy_um_per_px;
-[interiorSurfaceAreaUm2, validCells] = calculateOppositeDiagonalInteriorSurface(Zpatch, dx);
-if isnan(interiorSurfaceAreaUm2)
-    surfaceAreaUm2 = NaN;
-    projectedAreaUm2 = NaN;
-    ratio = NaN;
-    return;
-end
-
-surfaceAreaUm2 = interiorSurfaceAreaUm2;
-surfaceAreaUm2 = surfaceAreaUm2 + edgeStripArea(Zpatch(end, 1:end-1), Zpatch(end, 2:end), dx);
-surfaceAreaUm2 = surfaceAreaUm2 + edgeStripArea(Zpatch(1:end-1, end), Zpatch(2:end, end), dx);
-
-if isfinite(Zpatch(end, end))
-    surfaceAreaUm2 = surfaceAreaUm2 + dx^2 / 4;
-end
-
-projectedAreaUm2 = nnz(isfinite(Zpatch)) * dx^2;
-if projectedAreaUm2 == 0 || ~any(validCells(:))
-    ratio = NaN;
-else
-    ratio = surfaceAreaUm2 / projectedAreaUm2;
-end
-end
-
-function [surfaceOpposite, validCells] = calculateOppositeDiagonalInteriorSurface(Zpatch, dx)
-z11 = Zpatch(1:end-1, 1:end-1);
-z12 = Zpatch(1:end-1, 2:end);
-z21 = Zpatch(2:end, 1:end-1);
-z22 = Zpatch(2:end, 2:end);
-validCells = isfinite(z11) & isfinite(z12) & isfinite(z21) & isfinite(z22);
-if ~any(validCells(:))
-    surfaceOpposite = NaN;
-    return;
-end
-
-dz12 = z12(validCells) - z11(validCells);
-dz21 = z21(validCells) - z11(validCells);
-dz22 = z22(validCells) - z11(validCells);
-oppositeTri1 = 0.5 .* sqrt((dx .* dz21).^2 + (dx .* dz12).^2 + dx.^4);
-oppositeTri2 = 0.5 .* sqrt((dx .* (dz21 - dz22)).^2 + (dx .* (dz22 - dz12)).^2 + dx.^4);
-surfaceOpposite = sum(oppositeTri1 + oppositeTri2, 'omitnan');
-end
-
-function area = edgeStripArea(zA, zB, dx)
-valid = isfinite(zA) & isfinite(zB);
-area = sum(sqrt(dx^2 + (zB(valid) - zA(valid)).^2) .* (dx / 2), 'omitnan');
 end
 
 function [metricMean, metricStd] = summarizeMetric(v)
