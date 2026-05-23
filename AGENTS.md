@@ -1,6 +1,69 @@
 # AGENTS.md
 
-## Purpose
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## Documentation Instructions
 This repository has two complementary documentation layers for the scientific analysis modules:
 
 - `Function_Output_Notes/`
@@ -12,7 +75,7 @@ This repository has two complementary documentation layers for the scientific an
 
 Use both layers together. Do not replace one with the other.
 
-## Scope
+### Scope
 This documentation workflow currently applies to:
 
 - Module 1: `analyzeMounds.m`
@@ -27,7 +90,7 @@ It does not yet require long-form module-methods documents for:
 - `launchSOLFAnalysisApp.m`
 - helper utilities outside Modules 1-4
 
-## Documentation Roles
+### Documentation Roles
 Use the repo documents in these roles:
 
 - `Module_Docs/*.md`
@@ -46,7 +109,7 @@ Use the repo documents in these roles:
 
 Session notes may mention methodology, but they are not the authoritative home for current finalized methodology.
 
-## Finalized vs Testing Rule
+### Finalized vs Testing Rule
 All new or modified functionality must start in the module's testing folder as its own functionality-specific testing document.
 
 Rules:
@@ -58,7 +121,7 @@ Rules:
 - A feature moves from testing documentation into finalized documentation only after explicit user approval that it is finalized.
 - If a testing feature never becomes finalized, keep its testing document as a historical record instead of deleting or merging it away.
 
-## Required Update Workflow
+### Required Update Workflow
 When functionality changes, follow this workflow:
 
 1. Determine whether the change is still testing or is explicitly finalized.
@@ -72,7 +135,7 @@ When functionality changes, follow this workflow:
    - move the relevant testing content into the finalized module document
 4. Keep session notes chronological, but do not rely on them as the only documentation of methodology.
 
-## Git Branch Workflow
+### Git Branch Workflow
 Before adding or changing any code:
 
 1. immediately create a new git branch intended for GitHub
@@ -85,7 +148,7 @@ Examples:
 
 Do this before editing code files so implementation work is isolated from the start.
 
-## Finalized Module-Doc Structure
+### Finalized Module-Doc Structure
 Each finalized module document should keep the same top-level structure so readers can find information quickly:
 
 1. Module purpose and scientific questions answered
@@ -104,7 +167,7 @@ Default organization style:
 - workflow-first
 - grouped into natural analysis families where that improves clarity
 
-## Testing-Doc Structure
+### Testing-Doc Structure
 Each testing document should remain clearly provisional and should include:
 
 - feature under test
@@ -124,7 +187,7 @@ Valid promotion-status labels:
 
 Do not copy content from a testing doc into a finalized doc until explicit user approval is given.
 
-## Testing-Doc Organization
+### Testing-Doc Organization
 Testing documents should be organized like this:
 
 - `Module_Docs/Testing/Module1_MoundDetection/*.md`
@@ -142,7 +205,7 @@ Examples:
 - `q50_footprint_plane_testing.md`
 - `reflection_correction_threshold_testing.md`
 
-## Figure Documentation Policy
+### Figure Documentation Policy
 Each finalized module document must include a figure guide that documents the canonical figure set for that module.
 
 For each figure type, document:
@@ -160,14 +223,14 @@ Use a reference-first style:
 - avoid embedding large numbers of images directly into the markdown
 - representative embedded examples can be added later if they clearly improve interpretation
 
-## Cross-Linking Rule
+### Cross-Linking Rule
 Keep the layers connected:
 
 - each finalized module doc should link to its matching `Function_Output_Notes` page
 - each testing doc should link to the matching finalized module doc
 - each testing doc may link to relevant session notes or plans when useful for context
 
-## Default Tone and Depth
+### Default Tone and Depth
 The module-methods docs should be:
 
 - scientifically clear
