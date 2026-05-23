@@ -346,9 +346,21 @@ if ~exist(state.outputDir, 'dir')
     mkdir(state.outputDir);
 end
 bestParams = state.bestParams;
-savePath = fullfile(state.outputDir, 'bestParams.mat');
-save(savePath, 'bestParams');
-state.logFcn(sprintf('Saved bestParams to %s', savePath));
+fillThreshold = state.fillThreshold;
+if isempty(fillThreshold)
+    fillThreshold = NaN;
+end
+bestParams.fillDeepPits = logical(state.fillDeepPits);
+bestParams.fillThreshold = fillThreshold;
+bestParams.dilateRadius = state.dilateRadius;
+bestParams.minObjectArea = state.minObjectArea;
+[~, imageName] = fileparts(state.imagePath);
+bestParamsVarName = ['bestParams_' matlab.lang.makeValidName(imageName)];
+savePath = fullfile(state.outputDir, [bestParamsVarName '.mat']);
+saveStruct = struct();
+saveStruct.(bestParamsVarName) = bestParams;
+save(savePath, '-struct', 'saveStruct');
+state.logFcn(sprintf('Saved %s to %s', bestParamsVarName, savePath));
 end
 
 function result = buildReviewResult(state, tierLabel)
