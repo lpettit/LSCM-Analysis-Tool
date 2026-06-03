@@ -400,6 +400,8 @@ preferred_cx_shape_v = centroids(preferred_shape_valid_flag, 1);
 preferred_cy_shape_v = centroids(preferred_shape_valid_flag, 2);
 n_valid_c = sum(valid_flag_c);
 n_bc_both = sum(bc_both_valid);
+watershed_border_z_um = Z_raw(watershed_border_mask_img);
+watershed_border_z_um = watershed_border_z_um(isfinite(watershed_border_z_um));
 mean_preferred_rv_um = mean(preferred_rv_v, 'omitnan');
 mean_preferred_rz_um = mean(preferred_rz_v, 'omitnan');
 whole_image_slices = computeWholeImageHeightSliceMetrics( ...
@@ -431,7 +433,7 @@ fprintf('  Method C valid mounds       : %d / %d\n', n_valid_c, n_total);
 if n_bc_both > 0
     fprintf('  Open-side height (Q10-peak) : %.2f +/- %.2f um\n', ...
         mean(height_open_v, 'omitnan'), std(height_open_v, 'omitnan'));
-    fprintf('  Typical height (Q50-peak)   : %.2f +/- %.2f um\n', ...
+    fprintf('  Median height (Q50-peak)    : %.2f +/- %.2f um\n', ...
         mean(height_typical_v, 'omitnan'), std(height_typical_v, 'omitnan'));
     fprintf('  Crowded height (Q90-peak)   : %.2f +/- %.2f um\n', ...
         mean(height_crowded_v, 'omitnan'), std(height_crowded_v, 'omitnan'));
@@ -503,8 +505,8 @@ makeCategoryHistogramFigure(imageName, outputDir, 'Roughness', 'roughness_hist',
     {[], [], []});
 makeCategoryHistogramFigure(imageName, outputDir, 'Mound Height', 'mound_height_hist', ...
     {height_open_v, height_typical_v, height_crowded_v}, ...
-    {'Open-side height (um)', 'Typical height (um)', 'Crowded height (um)'}, ...
-    {'Open side: Q10 to peak', 'Typical: Q50 to peak', 'Crowded side: Q90 to peak'}, ...
+    {'Open-side height (um)', 'Median height (um)', 'Crowded height (um)'}, ...
+    {'Open side: Q10 to peak', 'Median: Q50 to peak', 'Crowded side: Q90 to peak'}, ...
     {[], [], []});
 makeCategoryHistogramFigure(imageName, outputDir, 'Footprint Size', 'footprint_size_hist', ...
     {preferred_fp_v, preferred_perim_v, preferred_diam_v}, ...
@@ -810,6 +812,7 @@ moundResults.method_c_base_position_um = mound_base_position_um;
 moundResults.method_c_mound_height_um = mound_height_c_um;
 moundResults.method_c_base_band_label_img = base_band_label_img;
 moundResults.method_c_watershed_border_mask = watershed_border_mask_img;
+moundResults.method_c_watershed_border_z_um = watershed_border_z_um;
 moundResults.method_c_Rv_per_mound = Rv_c_per_mound;
 moundResults.method_c_Rz_per_mound = Rz_c_per_mound;
 moundResults.base_q10_z_um = base_q10_z_um;
@@ -1300,9 +1303,10 @@ end
 h_ws = showDiagnosticImage(ax, ws_overlay);
 h_ws.AlphaData = 0.95 * double(watershed_border_mask);
 
-plot(ax, centroids(valid_flag_c,1), centroids(valid_flag_c,2), 'c+', 'MarkerSize', 4.8, 'LineWidth', 0.9);
+plot(ax, centroids(valid_flag_c,1), centroids(valid_flag_c,2), 'r+', 'MarkerSize', 4.8, 'LineWidth', 0.9);
 peak_valid = all(isfinite(watershed_peak_rowcol_px), 2);
-plot(ax, watershed_peak_rowcol_px(peak_valid,2), watershed_peak_rowcol_px(peak_valid,1), 'wo', ...
+plot(ax, watershed_peak_rowcol_px(peak_valid,2), watershed_peak_rowcol_px(peak_valid,1), 'o', ...
+    'Color', [1.00 0.85 0.00], 'MarkerFaceColor', [1.00 0.85 0.00], ...
     'MarkerSize', 4.8, 'LineWidth', 0.9);
 if any(~valid_flag_c)
     plot(ax, centroids(~valid_flag_c,1), centroids(~valid_flag_c,2), 'x', ...
@@ -1356,7 +1360,7 @@ overlay(:,:,1) = uint8(aug_boundary) * 255;
 overlay(:,:,2) = uint8(aug_boundary) * 180;
 h = showDiagnosticImage(ax2, overlay);
 h.AlphaData = double(aug_boundary) * 0.82;
-plot(ax2, centroids(:,1), centroids(:,2), 'g+', 'MarkerSize', 5, 'LineWidth', 0.8);
+plot(ax2, centroids(:,1), centroids(:,2), 'r+', 'MarkerSize', 5, 'LineWidth', 0.8);
 h_added = gobjects(1);
 if ~isempty(added_centroids)
     h_added = plot(ax2, added_centroids(:,1), added_centroids(:,2), 'yo', 'MarkerSize', 4.5, 'LineWidth', 0.9);
@@ -1986,7 +1990,7 @@ overlay(:,:,2) = uint8(boundary_mask) * rgbColor(2);
 overlay(:,:,3) = uint8(boundary_mask) * rgbColor(3);
 h = showDiagnosticImage(ax, overlay);
 h.AlphaData = double(boundary_mask) * 0.85;
-plot(ax, centroids(preferred_valid_flag,1), centroids(preferred_valid_flag,2), 'g+', 'MarkerSize', 5, 'LineWidth', 0.8);
+plot(ax, centroids(preferred_valid_flag,1), centroids(preferred_valid_flag,2), 'r+', 'MarkerSize', 5, 'LineWidth', 0.8);
 if any(~preferred_valid_flag)
     plot(ax, centroids(~preferred_valid_flag,1), centroids(~preferred_valid_flag,2), 'x', ...
         'Color', [0.75 0.15 0.15], 'MarkerSize', 5, 'LineWidth', 0.8);
@@ -2476,7 +2480,7 @@ vp_overlay(:,:,2) = uint8(vp) * 220;
 vp_overlay(:,:,3) = uint8(vp) * 220;
 h2 = showDiagnosticImage(ax1, vp_overlay);
 h2.AlphaData = double(vp) * 0.9;
-plot(ax1, centroids(valid_flag_b,1), centroids(valid_flag_b,2), 'g+', 'MarkerSize', 5, 'LineWidth', 0.8);
+plot(ax1, centroids(valid_flag_b,1), centroids(valid_flag_b,2), 'r+', 'MarkerSize', 5, 'LineWidth', 0.8);
 if any(~valid_flag_b)
     plot(ax1, centroids(~valid_flag_b,1), centroids(~valid_flag_b,2), 'x', 'Color', [0.55 0.55 0.55], 'MarkerSize', 5);
 end
@@ -2496,7 +2500,7 @@ overlay_c(:,:,1) = uint8(boundary_global) * 255;
 overlay_c(:,:,2) = uint8(boundary_global) * 165;
 h = showDiagnosticImage(ax2, overlay_c);
 h.AlphaData = double(boundary_global) * 0.45;
-plot(ax2, centroids(valid_flag_b,1), centroids(valid_flag_b,2), 'g+', 'MarkerSize', 5, 'LineWidth', 0.8);
+plot(ax2, centroids(valid_flag_b,1), centroids(valid_flag_b,2), 'r+', 'MarkerSize', 5, 'LineWidth', 0.8);
 if any(~valid_flag_b)
     plot(ax2, centroids(~valid_flag_b,1), centroids(~valid_flag_b,2), 'x', 'Color', [0.55 0.55 0.55], 'MarkerSize', 5);
 end

@@ -1127,7 +1127,7 @@ if ~isempty(shallow_cavities)
     plot(xs, ys, 'x', 'Color', [0.6 0.6 0.6], 'MarkerSize', 5, 'LineWidth', 0.8);
 end
 
-plot(centroids(:,1), centroids(:,2), '.', 'Color', [0.9 0.3 0.3], 'MarkerSize', 7);
+plot(centroids(:,1), centroids(:,2), 'r+', 'MarkerSize', 5, 'LineWidth', 0.8);
 if nargin >= 8 && ~isempty(added_edge_seed_centroids)
     plot(added_edge_seed_centroids(:,1), added_edge_seed_centroids(:,2), 'x', ...
         'Color', [0.95 0.8 0.2], 'MarkerSize', 4.5, 'LineWidth', 0.7);
@@ -1209,7 +1209,7 @@ if ~isempty(shallow_cavities)
     plot(xs, ys, 'x', 'Color', [0.6 0.6 0.6], 'MarkerSize', 5, 'LineWidth', 0.8);
 end
 
-plot(centroids(:,1), centroids(:,2), '.', 'Color', [0.9 0.3 0.3], 'MarkerSize', 7);
+plot(centroids(:,1), centroids(:,2), 'r+', 'MarkerSize', 5, 'LineWidth', 0.8);
 if nargin >= 8 && ~isempty(added_edge_seed_centroids)
     plot(added_edge_seed_centroids(:,1), added_edge_seed_centroids(:,2), 'x', ...
         'Color', [0.95 0.8 0.2], 'MarkerSize', 4.5, 'LineWidth', 0.7);

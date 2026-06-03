@@ -1,4 +1,4 @@
-cleasfunction spatialOrderResults = analyzeSpatialOrder(m1, outputDir)
+function spatialOrderResults = analyzeSpatialOrder(m1, outputDir)
 % =========================================================================
 %  analyzeSpatialOrder  -  Module 4: Spatial order, pair distribution,
 %                          and lightweight local disorder diagnostics
@@ -270,8 +270,8 @@ t = tiledlayout(tabbed_fig.tabs.voronoi, 1, 3, 'Padding', 'compact', 'TileSpacin
 nexttile(t, 1);
 showDiagnosticImage(gca, I_rgb); hold(gca, 'on');
 drawVoronoiCells(gca, voronoi_polygons_px, voronoi_valid_flag, voronoi_area_um2);
-plot(gca, centroids(voronoi_valid_flag,1), centroids(voronoi_valid_flag,2), '.', ...
-    'Color', [1 1 1], 'MarkerSize', 4);
+plot(gca, centroids(voronoi_valid_flag,1), centroids(voronoi_valid_flag,2), 'r+', ...
+    'MarkerSize', 5, 'LineWidth', 0.8);
 if any(~voronoi_valid_flag)
     plot(gca, centroids(~voronoi_valid_flag,1), centroids(~voronoi_valid_flag,2), 'x', ...
         'Color', [0.55 0.55 0.55], 'MarkerSize', 5, 'LineWidth', 0.8);
@@ -329,8 +329,8 @@ fig_cells = figure('Visible', 'off', 'Color', 'w', 'Position', [100 100 900 820]
 ax_cells = axes(fig_cells);
 showDiagnosticImage(ax_cells, I_rgb); hold(ax_cells, 'on');
 drawVoronoiCells(ax_cells, voronoi_polygons_px, voronoi_valid_flag, voronoi_area_um2);
-plot(ax_cells, centroids(voronoi_valid_flag,1), centroids(voronoi_valid_flag,2), '.', ...
-    'Color', [1 1 1], 'MarkerSize', 4);
+plot(ax_cells, centroids(voronoi_valid_flag,1), centroids(voronoi_valid_flag,2), 'r+', ...
+    'MarkerSize', 5, 'LineWidth', 0.8);
 if any(~voronoi_valid_flag)
     plot(ax_cells, centroids(~voronoi_valid_flag,1), centroids(~voronoi_valid_flag,2), 'x', ...
         'Color', [0.55 0.55 0.55], 'MarkerSize', 5, 'LineWidth', 0.8);
