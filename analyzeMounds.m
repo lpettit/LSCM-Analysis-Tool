@@ -237,7 +237,7 @@ for k = 1:size(trimmed_edges, 1)
 end
 
 % Overlay centroids
-plot(centroids(:,1), centroids(:,2), 'r.', 'MarkerSize', 8);
+plot(centroids(:,1), centroids(:,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
 
 % Colourbar
 cb = colorbar;

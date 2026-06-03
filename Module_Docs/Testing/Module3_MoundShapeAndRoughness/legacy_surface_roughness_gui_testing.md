@@ -37,7 +37,7 @@ Current intended behavior:
 - compute `SA_to_A_ratio`, the triangulated surface area divided by the XY projected area, for the full image and each ROI
 - summarize ROI-level `Rp`, `Rv`, and `Rz` with mean and standard deviation
 - summarize ROI-level `SA_to_A_ratio` with mean and standard deviation
-- save the finished ROI set and measurements when the user clicks `Done`
+- save the finished ROI set and measurements when the user clicks `Save`
 
 ## Current Algorithm Or Workflow
 1. launch the workflow either from:
@@ -66,7 +66,7 @@ Current intended behavior:
    - `Rz_um = Rp_um + Rv_um`
    - `SA_to_A_ratio = SurfaceArea_um2 / ProjectedArea_um2`, using the selected VK-matched convention: opposite-diagonal cell facets, full finite-pixel projected area, and right/bottom edge extension
 7. automatically update the per-ROI table and the current summary after each completed ROI placement
-8. on `Done`, save:
+8. on `Save`, save:
    - a `.mat` results struct with ROI geometry, global roughness context, and summary values
    - a `.csv` table of ROI-level measurements
 
@@ -80,6 +80,7 @@ Current intended behavior:
 - ROI roughness is always referenced to the whole-image global reference plane, not a locally fitted plane.
 - The display colormap is `jet` as a built-in approximation to the legacy VK look.
 - The saved filenames use a `legacy_surface_roughness` suffix based on the source image name.
+- In the embedded app path, saved files are written under `<imageName>_mound_analysis_exports/Legacy_Roughness/` inside the selected output folder.
 - The projected area used for `SA_to_A_ratio` is the full finite-pixel footprint area.
 - The `SA_to_A_ratio` convention was selected after diagnostic comparison against VK Analyzer on `Cu.vk4`.
 

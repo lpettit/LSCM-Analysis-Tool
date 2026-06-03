@@ -48,6 +48,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         ManualCountButton matlab.ui.control.Button
         SaveCurrentTabButton matlab.ui.control.Button
         SaveAllTabsButton matlab.ui.control.Button
+        ReviewSummaryTable matlab.ui.control.Table
+        ReviewInfoTextArea matlab.ui.control.TextArea
         StatusTextArea matlab.ui.control.TextArea
 
         LegacyAxes matlab.ui.control.UIAxes
@@ -76,6 +78,9 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         MoundSurfaceTabData cell = {}
         MoundSurfaceSession struct = struct()
         MoundSurfaceRenderedGroups cell = {}
+        MoundSurfaceExportedPlotPaths cell = {}
+        CurrentAnalysisId char = ''
+        UnsavedAnalysisIds cell = {}
         IdleButtonColor double = [0.94 0.94 0.94]
         ActiveButtonColor double = [0.55 0.82 0.58]
         RunningButtonColor double = [0.30 0.68 0.35]
@@ -247,11 +252,89 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             end
         end
 
+        function tf = confirmAnalysisSwitch(app, targetAnalysisId)
+            tf = true;
+            if strcmp(app.CurrentAnalysisId, targetAnalysisId)
+                return;
+            end
+            unsavedIds = app.UnsavedAnalysisIds;
+            if isempty(unsavedIds)
+                return;
+            end
+
+            names = cellfun(@(id) app.analysisDisplayName(id), unsavedIds, 'UniformOutput', false);
+            msg = sprintf('Unsaved results exist for:\n\n%s\n\nSave before switching analyses?', ...
+                strjoin(names, newline));
+            choice = uiconfirm(app.UIFigure, msg, 'Unsaved Analysis Results', ...
+                'Options', {'Save', 'Continue without saving', 'Cancel'}, ...
+                'DefaultOption', 1, 'CancelOption', 3);
+            switch choice
+                case 'Save'
+                    tf = app.saveUnsavedAnalyses(unsavedIds);
+                case 'Continue without saving'
+                    app.UnsavedAnalysisIds = setdiff(app.UnsavedAnalysisIds, unsavedIds, 'stable');
+                    tf = true;
+                otherwise
+                    tf = false;
+            end
+        end
+
+        function tf = saveUnsavedAnalyses(app, analysisIds)
+            tf = true;
+            for i = 1:numel(analysisIds)
+                try
+                    switch analysisIds{i}
+                        case 'moundDetection'
+                            app.onDone([], []);
+                        case 'moundSurface'
+                            app.onSaveAllMoundSurfaceTabs();
+                        case 'legacyRoughness'
+                            app.onLegacyDone();
+                    end
+                catch ME
+                    tf = false;
+                    uialert(app.UIFigure, ME.message, 'Save Error', 'Interpreter', 'none');
+                    return;
+                end
+            end
+        end
+
+        function markAnalysisDirty(app, analysisId)
+            if ~any(strcmp(app.UnsavedAnalysisIds, analysisId))
+                app.UnsavedAnalysisIds{end+1} = analysisId;
+            end
+        end
+
+        function markAnalysisClean(app, analysisId)
+            app.UnsavedAnalysisIds = setdiff(app.UnsavedAnalysisIds, {analysisId}, 'stable');
+        end
+
+        function name = analysisDisplayName(~, analysisId)
+            switch analysisId
+                case 'moundDetection'
+                    name = 'Mound Detection';
+                case 'cavityAnalysis'
+                    name = 'Cavity Analysis';
+                case 'moundSurface'
+                    name = 'Mound/Surface Analysis';
+                case 'spatialAnalysis'
+                    name = 'Spatial Analysis';
+                case 'legacyRoughness'
+                    name = 'Legacy Roughness Measurement';
+                otherwise
+                    name = analysisId;
+            end
+        end
+
         function onMoundDetection(app, ~, ~)
             if ~app.hasValidVk4()
                 uialert(app.UIFigure, 'Choose a valid .vk4 file before starting mound detection.', 'Missing Input');
                 return;
             end
+            if ~app.confirmAnalysisSwitch('moundDetection')
+                return;
+            end
+            app.CurrentAnalysisId = 'moundDetection';
             app.stopLegacyPointerCallbacks();
             app.MoundDetectionButton.BackgroundColor = app.ActiveButtonColor;
             app.MoundSurfaceButton.BackgroundColor = app.IdleButtonColor;
@@ -269,12 +352,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             if isVisible
                 app.MoundSettingsPanel.Visible = 'on';
                 app.MoundSurfaceSettingsPanel.Visible = 'off';
-                app.MainGrid.ColumnWidth = {280, 2, 235, '1x'};
             else
                 app.MoundSettingsPanel.Visible = 'off';
-                if strcmp(app.MoundSurfaceSettingsPanel.Visible, 'off')
-                    app.MainGrid.ColumnWidth = {280, 2, 0, '1x'};
-                end
             end
         end
 
@@ -282,12 +361,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             if isVisible
                 app.MoundSurfaceSettingsPanel.Visible = 'on';
                 app.MoundSettingsPanel.Visible = 'off';
-                app.MainGrid.ColumnWidth = {280, 2, 255, '1x'};
             else
                 app.MoundSurfaceSettingsPanel.Visible = 'off';
-                if strcmp(app.MoundSettingsPanel.Visible, 'off')
-                    app.MainGrid.ColumnWidth = {280, 2, 0, '1x'};
-                end
             end
         end
 
@@ -342,12 +417,18 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             try
                 inputPath = char(app.InputEditField.Value);
                 outputDir = char(app.OutputEditField.Value);
+                [~, imageName] = fileparts(inputPath);
+                moundDetectionOutputDir = app.getMoundDetectionExportDir(outputDir, imageName);
+                if ~exist(moundDetectionOutputDir, 'dir')
+                    mkdir(moundDetectionOutputDir);
+                end
                 app.MoundGuiState = refineMoundsStableGuiCore('init', inputPath, ...
                     logical(app.FillDeepPitsCheckBox.Value), app.getFillThresholdValue(), ...
-                    3, 20, outputDir, double(app.MaxEvalsField.Value), ...
+                    3, 20, moundDetectionOutputDir, double(app.MaxEvalsField.Value), ...
                     @(msg) app.appendLog(msg));
                 [app.MoundGuiState, result] = refineMoundsStableGuiCore('runInitial', app.MoundGuiState);
                 app.addMoundReviewTab(result);
+                app.markAnalysisDirty('moundDetection');
                 app.RunMoundDetectionButton.BackgroundColor = app.ActiveButtonColor;
                 app.setTierControlsEnabled(true);
             catch ME
@@ -380,6 +461,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 app.BestParamsHasDetectionSettings = true;
                 app.clearMoundSurfaceSession();
                 app.updateModuleButtonStates();
+                app.markAnalysisClean('moundDetection');
                 app.logStatus({
                     'Mound detection accepted.'
                     ['Saved bestParams: ' savePath]
@@ -419,6 +501,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 [app.MoundGuiState, result] = refineMoundsStableGuiCore('feedback', ...
                     app.MoundGuiState, action, manualCount);
                 app.addMoundReviewTab(result);
+                app.markAnalysisDirty('moundDetection');
                 app.setTierControlsEnabled(true);
             catch ME
                 app.logStatus({'Mound detection feedback failed.'; ME.message});
@@ -461,15 +544,19 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             tab = uitab(app.ReviewTabGroup, 'Title', tabTitle);
             tab.UserData = app.MoundResultCount;
             app.MoundReviewResults{app.MoundResultCount} = result;
-            tabGrid = uigridlayout(tab, [1 2]);
-            tabGrid.ColumnWidth = {'1x', '1x'};
+            tabGrid = uigridlayout(tab, [1 1]);
+            tabGrid.ColumnWidth = {'1x'};
             tabGrid.RowHeight = {'1x'};
             tabGrid.Padding = [8 8 8 8];
-            tabGrid.ColumnSpacing = 10;
 
-            axOverlay = uiaxes(tabGrid);
-            axOverlay.Layout.Row = 1;
-            axOverlay.Layout.Column = 1;
+            plotTabGroup = uitabgroup(tabGrid);
+            plotTabGroup.Layout.Row = 1;
+            plotTabGroup.Layout.Column = 1;
+
+            overlayTab = uitab(plotTabGroup, 'Title', 'Centroid Overlay');
+            overlayGrid = uigridlayout(overlayTab, [1 1]);
+            overlayGrid.Padding = [6 6 6 6];
+            axOverlay = uiaxes(overlayGrid);
             imshow(result.I, [], 'Parent', axOverlay);
             hold(axOverlay, 'on');
             if ~isempty(result.centroids)
@@ -480,9 +567,10 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             title(axOverlay, sprintf('%s | %d mounds | target %.0f', ...
                 result.tierLabel, result.nCurrent, result.nMid), 'Interpreter', 'none');
 
-            axHist = uiaxes(tabGrid);
-            axHist.Layout.Row = 1;
-            axHist.Layout.Column = 2;
+            spacingTab = uitab(plotTabGroup, 'Title', 'Spacing Distribution');
+            spacingGrid = uigridlayout(spacingTab, [1 1]);
+            spacingGrid.Padding = [6 6 6 6];
+            axHist = uiaxes(spacingGrid);
             if ~isempty(result.spacingDistances)
                 histogram(axHist, result.spacingDistances, 35, ...
                     'FaceColor', [0.3 0.6 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.85);
@@ -496,8 +584,35 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 axis(axHist, 'off');
             end
 
+            plotTabGroup.SelectedTab = overlayTab;
             app.ReviewTabGroup.SelectedTab = tab;
+            app.updateMoundDetectionSummaryFromSelectedTab();
             app.appendLog(sprintf('Review tab added: %s (%d mounds).', tabTitle, result.nCurrent));
+        end
+
+        function updateMoundDetectionSummaryFromSelectedTab(app)
+            if ~isgraphics(app.ReviewSummaryTable) || isempty(app.ReviewTabGroup.SelectedTab)
+                return;
+            end
+            idx = app.ReviewTabGroup.SelectedTab.UserData;
+            if isempty(idx) || idx < 1 || idx > numel(app.MoundReviewResults) || ...
+                    isempty(app.MoundReviewResults{idx})
+                return;
+            end
+            result = app.MoundReviewResults{idx};
+            metric = {'Tier'; 'Mound count'; 'Target count'; 'Spacing CV'; 'Mean spacing (px)'};
+            spacingMean = NaN;
+            if isfield(result, 'spacingDistances') && ~isempty(result.spacingDistances)
+                spacingMean = mean(result.spacingDistances, 'omitnan');
+            end
+            value = {result.tierLabel; result.nCurrent; result.nMid; result.spacingCv; spacingMean};
+            app.ReviewSummaryTable.Data = table(metric, value, 'VariableNames', {'Metric', 'Value'});
+            if isgraphics(app.ReviewInfoTextArea)
+                app.ReviewInfoTextArea.Value = {
+                    ['Review result: ' result.tierLabel]
+                    'Analysis information panel reserved for future details.'
+                    };
+            end
         end
 
         function result = getSelectedMoundReviewResult(app)
@@ -520,11 +635,12 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 error('SOLFAnalysisApp:MissingOutputDir', ...
                     'Choose an output folder before accepting mound detection.');
             end
+
+            [~, imageName] = fileparts(char(app.InputEditField.Value));
+            outputDir = app.getMoundDetectionExportDir(outputDir, imageName);
             if ~exist(outputDir, 'dir')
                 mkdir(outputDir);
             end
-
-            [~, imageName] = fileparts(char(app.InputEditField.Value));
             safeTier = regexprep(result.tierLabel, '[^\w.-]', '_');
             centroidPath = fullfile(outputDir, sprintf('%s_%s_centroids.png', imageName, safeTier));
             spacingPath = fullfile(outputDir, sprintf('%s_%s_spacing.png', imageName, safeTier));
@@ -579,6 +695,10 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     'Missing Detection Settings');
                 return;
             end
+            if ~app.confirmAnalysisSwitch('moundSurface')
+                return;
+            end
+            app.CurrentAnalysisId = 'moundSurface';
             app.stopLegacyPointerCallbacks();
             app.MoundDetectionButton.BackgroundColor = app.IdleButtonColor;
             app.MoundSurfaceButton.BackgroundColor = app.ActiveButtonColor;
@@ -590,6 +710,36 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 'Mound/Surface Analysis selected.'
                 'Choose output groups, then run analysis.'
                 });
+        end
+
+        function onCavityAnalysis(app, ~, ~)
+            if ~app.confirmAnalysisSwitch('cavityAnalysis')
+                return;
+            end
+            app.CurrentAnalysisId = 'cavityAnalysis';
+            app.stopLegacyPointerCallbacks();
+            app.MoundDetectionButton.BackgroundColor = app.IdleButtonColor;
+            app.MoundSurfaceButton.BackgroundColor = app.IdleButtonColor;
+            app.LegacyRoughnessButton.BackgroundColor = app.IdleButtonColor;
+            app.showMoundSettings(false);
+            app.showMoundSurfaceSettings(false);
+            app.showReviewPanel(false);
+            app.logStatus({'Cavity Analysis is not implemented in the GUI yet.'});
+        end
+
+        function onSpatialAnalysis(app, ~, ~)
+            if ~app.confirmAnalysisSwitch('spatialAnalysis')
+                return;
+            end
+            app.CurrentAnalysisId = 'spatialAnalysis';
+            app.stopLegacyPointerCallbacks();
+            app.MoundDetectionButton.BackgroundColor = app.IdleButtonColor;
+            app.MoundSurfaceButton.BackgroundColor = app.IdleButtonColor;
+            app.LegacyRoughnessButton.BackgroundColor = app.IdleButtonColor;
+            app.showMoundSettings(false);
+            app.showMoundSurfaceSettings(false);
+            app.showReviewPanel(false);
+            app.logStatus({'Spatial Analysis is not implemented in the GUI yet.'});
         end
 
         function onRunMoundSurfaceAnalysis(app, ~, ~)
@@ -623,6 +773,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     app.ensureMoundShapeContext(selectedGroups, outputDir);
                 end
                 app.addMoundSurfaceTabs(selectedGroups);
+                app.markAnalysisDirty('moundSurface');
                 app.RunMoundSurfaceButton.BackgroundColor = app.ActiveButtonColor;
                 app.appendLog('Mound/surface analysis update complete.');
             catch ME
@@ -664,6 +815,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.MoundSurfaceSession = struct();
             app.MoundSurfaceTabData = {};
             app.MoundSurfaceRenderedGroups = {};
+            app.MoundSurfaceExportedPlotPaths = {};
         end
 
         function ensureMoundSpacingContext(app, inputPath, bestParamsPath, outputDir)
@@ -740,6 +892,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 lines = cellstr(lines);
             end
             app.StatusTextArea.Value = lines;
+            app.scrollStatusToBottom();
         end
 
         function appendLog(app, msg)
@@ -747,7 +900,14 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             current = app.StatusTextArea.Value;
             if ischar(current), current = {current}; end
             app.StatusTextArea.Value = [current; {msg}];
-            drawnow;
+            app.scrollStatusToBottom();
+        end
+
+        function scrollStatusToBottom(app)
+            if isgraphics(app.StatusTextArea)
+                drawnow limitrate;
+                scroll(app.StatusTextArea, 'bottom');
+            end
         end
 
         function createMoundSurfaceReviewAreaContent(app)
@@ -757,16 +917,25 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.MoundSurfaceTabData = {};
             app.MoundSurfaceRenderedGroups = {};
 
-            app.ReviewGrid = uigridlayout(app.ReviewPanel, [3 1]);
-            app.ReviewGrid.RowHeight = {'1x', 42, 135};
+            app.ReviewGrid = uigridlayout(app.ReviewPanel, [1 2]);
+            app.ReviewGrid.ColumnWidth = {'1x', 380};
+            app.ReviewGrid.RowHeight = {'1x'};
             app.ReviewGrid.Padding = [8 8 8 8];
-            app.ReviewGrid.RowSpacing = 8;
+            app.ReviewGrid.ColumnSpacing = 10;
 
-            app.ReviewTabGroup = uitabgroup(app.ReviewGrid);
+            leftReviewGrid = uigridlayout(app.ReviewGrid, [2 1]);
+            leftReviewGrid.Layout.Row = 1;
+            leftReviewGrid.Layout.Column = 1;
+            leftReviewGrid.RowHeight = {'1x', 42};
+            leftReviewGrid.Padding = [0 0 0 0];
+            leftReviewGrid.RowSpacing = 8;
+
+            app.ReviewTabGroup = uitabgroup(leftReviewGrid);
             app.ReviewTabGroup.Layout.Row = 1;
             app.ReviewTabGroup.Layout.Column = 1;
+            app.ReviewTabGroup.SelectionChangedFcn = @(src, event) app.updateSharedReviewSummaryFromSelectedTab();
 
-            saveGrid = uigridlayout(app.ReviewGrid, [1 4]);
+            saveGrid = uigridlayout(leftReviewGrid, [1 4]);
             saveGrid.Layout.Row = 2;
             saveGrid.Layout.Column = 1;
             saveGrid.ColumnWidth = {130, 100, 110, '1x'};
@@ -777,7 +946,25 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.SaveAllTabsButton = uibutton(saveGrid, 'push', 'Text', 'Save All');
             app.SaveAllTabsButton.ButtonPushedFcn = @(src, event) app.onSaveAllMoundSurfaceTabs();
 
-            app.StatusTextArea = uitextarea(app.ReviewGrid, 'Editable', 'off');
+            rightReviewGrid = uigridlayout(app.ReviewGrid, [3 1]);
+            rightReviewGrid.Layout.Row = 1;
+            rightReviewGrid.Layout.Column = 2;
+            rightReviewGrid.RowHeight = {190, '1x', 135};
+            rightReviewGrid.Padding = [0 0 0 0];
+            rightReviewGrid.RowSpacing = 8;
+
+            summaryPanel = uipanel(rightReviewGrid, 'Title', 'Summary');
+            summaryPanel.Layout.Row = 1;
+            summaryGrid = uigridlayout(summaryPanel, [1 1]);
+            summaryGrid.Padding = [6 6 6 6];
+            app.ReviewSummaryTable = uitable(summaryGrid);
+            app.ReviewSummaryTable.Data = table();
+
+            app.ReviewInfoTextArea = uitextarea(rightReviewGrid, 'Editable', 'off');
+            app.ReviewInfoTextArea.Layout.Row = 2;
+            app.ReviewInfoTextArea.Value = {'Analysis information panel reserved for future details.'};
+
+            app.StatusTextArea = uitextarea(rightReviewGrid, 'Editable', 'off');
             app.StatusTextArea.Layout.Row = 3;
             app.StatusTextArea.Layout.Column = 1;
             app.logStatus({
@@ -807,11 +994,10 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             tabIndex = numel(app.MoundSurfaceTabData) + 1;
             tab.UserData = tabIndex;
 
-            tabGrid = uigridlayout(tab, [1 2]);
-            tabGrid.ColumnWidth = {'2x', '1x'};
+            tabGrid = uigridlayout(tab, [1 1]);
+            tabGrid.ColumnWidth = {'1x'};
             tabGrid.RowHeight = {'1x'};
             tabGrid.Padding = [8 8 8 8];
-            tabGrid.ColumnSpacing = 10;
 
             imagePanel = uipanel(tabGrid, 'Title', tabSpec.figureTitle);
             imagePanel.Layout.Row = 1;
@@ -819,17 +1005,29 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             tabSpec = app.populatePlotPanel(imagePanel, tabSpec);
             app.MoundSurfaceTabData{tabIndex} = tabSpec;
 
-            tablePanel = uipanel(tabGrid, 'Title', 'Summary');
-            tablePanel.Layout.Row = 1;
-            tablePanel.Layout.Column = 2;
-            tableGrid = uigridlayout(tablePanel, [1 1]);
-            tableGrid.Padding = [6 6 6 6];
-            summaryTable = uitable(tableGrid);
-            summaryTable.Data = tabSpec.summaryTable;
-
             app.ReviewTabGroup.SelectedTab = tab;
+            app.updateSharedReviewSummaryFromSelectedTab();
             app.MoundSurfaceRenderedGroups{end+1} = groupId;
             app.appendLog(['Review tab added: ' tabSpec.title]);
+        end
+
+        function updateSharedReviewSummaryFromSelectedTab(app)
+            if ~isgraphics(app.ReviewSummaryTable) || isempty(app.ReviewTabGroup.SelectedTab)
+                return;
+            end
+            idx = app.ReviewTabGroup.SelectedTab.UserData;
+            if isempty(idx) || idx < 1 || idx > numel(app.MoundSurfaceTabData) || ...
+                    isempty(app.MoundSurfaceTabData{idx})
+                return;
+            end
+            tabSpec = app.MoundSurfaceTabData{idx};
+            app.ReviewSummaryTable.Data = tabSpec.summaryTable;
+            if isgraphics(app.ReviewInfoTextArea)
+                app.ReviewInfoTextArea.Value = {
+                    ['Output group: ' tabSpec.title]
+                    'Analysis information panel reserved for future details.'
+                    };
+            end
         end
 
         function titleText = moundSurfaceGroupTitle(~, groupId)
@@ -887,9 +1085,10 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     tabSpec = app.makeTabSpec(groupId, 'Direct Height', 'Mound Height Diagnostics', ...
                         [app.makePlotSpec('base_band_overlay', 'Base-Band Overlay', 'baseBandOverlay', {}), ...
                          app.makePlotSpec('height_open', 'Open Height', 'histM3', {'height_open_um'}), ...
-                         app.makePlotSpec('height_typical', 'Typical Height', 'histM3', {'height_typical_um'}), ...
-                         app.makePlotSpec('height_crowded', 'Crowded Height', 'histM3', {'height_crowded_um'})], ...
-                        app.metricSummaryTable({'preferred_mound_height_um','preferred_mound_base_position_um','height_open_um','height_typical_um','height_crowded_um'}));
+                         app.makePlotSpec('height_typical', 'Median Height', 'histM3', {'height_typical_um'}), ...
+                         app.makePlotSpec('height_crowded', 'Crowded Height', 'histM3', {'height_crowded_um'}), ...
+                         app.makePlotSpec('border_z', 'Watershed Border Z', 'histM3', {'method_c_watershed_border_z_um'})], ...
+                        app.metricSummaryTable({'preferred_mound_height_um','preferred_mound_base_position_um','height_open_um','height_typical_um','height_crowded_um','method_c_watershed_border_z_um'}));
                 case 'footprintShape'
                     tabSpec = app.makeTabSpec(groupId, 'Footprint Shape', 'Footprint Size And Shape', ...
                         [app.makePlotSpec('shape_overlay', 'Equivalent-Diameter Overlay', 'shapeOverlay', {}), ...
@@ -925,8 +1124,9 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     tabSpec = app.makeTabSpec(groupId, 'Whole-Image Slices', 'Whole-Image Height Slices', ...
                         [app.makePlotSpec('slice_area', 'Area vs Height', 'lineM3', {'whole_image_slice_z_rel_um', 'whole_image_cross_section_area_um2'}), ...
                          app.makePlotSpec('slice_perimeter', 'Perimeter vs Height', 'lineM3', {'whole_image_slice_z_rel_um', 'whole_image_perimeter_um'}), ...
+                         app.makePlotSpec('peak_perimeter_threshold', 'Peak Perimeter Threshold', 'peakPerimeterThresholdOverlay', {}), ...
                          app.makePlotSpec('slice_sa', 'Surface Area vs Height', 'lineM3', {'whole_image_slice_z_rel_um', 'whole_image_cumulative_surface_area_um2'})], ...
-                        app.metricSummaryTable({'whole_image_peak_perimeter_um','whole_image_z_rel_at_peak_perimeter_um','whole_image_z_rel_at_half_area_um','whole_image_cumulative_surface_area_um2'}));
+                        app.metricSummaryTable({'whole_image_peak_perimeter_um','whole_image_z_at_peak_perimeter_um','whole_image_z_rel_at_peak_perimeter_um','whole_image_cross_section_area_at_peak_perimeter_um2','whole_image_z_rel_at_half_area_um','whole_image_cumulative_surface_area_um2'}));
                 otherwise
                     tabSpec = app.makeTabSpec(groupId, 'QA Diagnostics', 'Watershed And Base Diagnostics', ...
                         [app.makePlotSpec('watershed_seeds', 'Watershed Seeds', 'watershedSeedsOverlay', {}), ...
@@ -961,13 +1161,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     v = app.getMoundShapeMetric(plotSpec.fields{1});
                     app.plotMetricHistogram(ax, v, plotSpec.title, plotSpec.fields{1});
                 case 'lineM3'
-                    x = app.getMoundShapeMetric(plotSpec.fields{1});
-                    y = app.getMoundShapeMetric(plotSpec.fields{2});
-                    plot(ax, x, y, '-', 'LineWidth', 1.8, 'Color', [0.15 0.45 0.75]);
-                    xlabel(ax, app.metricAxisLabel(plotSpec.fields{1}));
-                    ylabel(ax, app.metricAxisLabel(plotSpec.fields{2}));
-                    title(ax, plotSpec.title, 'Interpreter', 'none');
-                    grid(ax, 'on');
+                    app.plotMoundSurfaceLineMetric(ax, plotSpec, 1.8);
                 case 'watershedScores'
                     x = app.getMoundShapeMetric('watershed_sigma_candidates_px');
                     y = app.getMoundShapeMetric('watershed_sigma_scores');
@@ -988,6 +1182,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     app.plotMethodBOverlay(ax);
                 case 'surfaceAreaVolumeOverlay'
                     app.plotSurfaceAreaVolumeOverlay(ax);
+                case 'peakPerimeterThresholdOverlay'
+                    app.plotPeakPerimeterThresholdOverlay(ax);
                 case 'watershedBoundaryOverlay'
                     app.plotWatershedBoundaryOverlay(ax);
                 case 'validityOverlay'
@@ -1021,16 +1217,48 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 cb = colorbar(ax);
                 cb.Label.String = 'NN spacing (um)';
             end
-            plot(ax, centroids(:,1), centroids(:,2), 'r.', 'MarkerSize', 8);
+            plot(ax, centroids(:,1), centroids(:,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             hEdge = plot(ax, NaN, NaN, '-', 'Color', [0.15 0.45 0.75], 'LineWidth', 0.8);
-            hCentroid = plot(ax, NaN, NaN, 'r.', 'MarkerSize', 10);
-            legend(ax, [hEdge hCentroid], {'Delaunay edge', 'Mound centroid'}, ...
-                'Location', 'northeastoutside');
+            hCentroid = plot(ax, NaN, NaN, 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
+            legend(ax, [hEdge hCentroid], {'Delaunay edge', 'Mound detection centroid'}, ...
+                'Location', 'southoutside', 'Orientation', 'horizontal');
             title(ax, sprintf('%s | n=%d | %.2f um mean spacing', ...
                 app.M1GuiResults.imageName, app.M1GuiResults.n_mounds, app.M1GuiResults.nn_mean_um), ...
                 'Interpreter', 'none');
             axis(ax, 'image');
             hold(ax, 'off');
+        end
+
+        function plotMoundSurfaceLineMetric(app, ax, plotSpec, lineWidth)
+            x = app.getMoundShapeMetric(plotSpec.fields{1});
+            y = app.getMoundShapeMetric(plotSpec.fields{2});
+            hCurve = plot(ax, x, y, '-', 'LineWidth', lineWidth, 'Color', [0.15 0.45 0.75]);
+            hold(ax, 'on');
+            if strcmp(plotSpec.id, 'slice_perimeter')
+                xPeak = app.getMoundShapeMetric('whole_image_z_rel_at_peak_perimeter_um');
+                yPeak = app.getMoundShapeMetric('whole_image_peak_perimeter_um');
+                zAbs = app.getMoundShapeMetric('whole_image_z_at_peak_perimeter_um');
+                if isfinite(xPeak) && isfinite(yPeak)
+                    hPeak = plot(ax, xPeak, yPeak, 'o', ...
+                        'Color', [0.85 0.15 0.15], 'MarkerFaceColor', [1.00 0.85 0.00], ...
+                        'MarkerSize', 7, 'LineWidth', 1.2);
+                    hX = xline(ax, xPeak, '--', 'Color', [0.85 0.15 0.15], 'LineWidth', 1.1);
+                    hY = yline(ax, yPeak, '--', 'Color', [0.85 0.15 0.15], 'LineWidth', 1.1);
+                    legend(ax, [hCurve hPeak hX hY], ...
+                        {'Perimeter curve', 'Maximum perimeter', 'Peak relative height', 'Peak perimeter'}, ...
+                        'Location', 'best');
+                    title(ax, sprintf('%s | max %.3g um at %.3g um rel / %.3g um abs', ...
+                        plotSpec.title, yPeak, xPeak, zAbs), 'Interpreter', 'none');
+                else
+                    title(ax, plotSpec.title, 'Interpreter', 'none');
+                end
+            else
+                title(ax, plotSpec.title, 'Interpreter', 'none');
+            end
+            hold(ax, 'off');
+            xlabel(ax, app.metricAxisLabel(plotSpec.fields{1}));
+            ylabel(ax, app.metricAxisLabel(plotSpec.fields{2}));
+            grid(ax, 'on');
         end
 
         function showRawSurface(app, ax)
@@ -1072,14 +1300,14 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     plot(ax, cx(k,1) + rPx*cos(theta), cx(k,2) + rPx*sin(theta), '-', ...
                         'Color', cmap(cidx, :), 'LineWidth', 1.0);
                 end
-                hCentroid = plot(ax, cx(validIdx,1), cx(validIdx,2), 'r.', 'MarkerSize', 7);
+                hCentroid = plot(ax, cx(validIdx,1), cx(validIdx,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
                 colormap(ax, cmap);
                 clim(ax, [hLo hHi]);
                 cb = colorbar(ax);
                 cb.Label.String = 'Preferred mound height (um)';
                 hCircle = plot(ax, NaN, NaN, '-', 'Color', cmap(round(size(cmap, 1) * 0.75), :), 'LineWidth', 1.0);
-                legend(ax, [hCircle hCentroid], {'Equivalent-diameter circle', 'Accepted centroid'}, ...
-                    'Location', 'northeastoutside');
+                legend(ax, [hCircle hCentroid], {'Equivalent-diameter circle', 'Mound detection centroid'}, ...
+                    'Location', 'southoutside', 'Orientation', 'horizontal');
             end
             title(ax, 'Equivalent-diameter circles from Q50 half-max footprint area', 'Interpreter', 'none');
             hold(ax, 'off');
@@ -1138,9 +1366,41 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 hFeretProxy = plot(ax, NaN, NaN, '-', 'Color', [0.15 1.00 0.35], 'LineWidth', 1.0);
                 legend(ax, [hBoundaryProxy hEllipseProxy hEllipseAxisProxy hFeretProxy], ...
                     {'Q50 half-max boundary', 'Ellipse fit', 'Ellipse major axis', 'Feret max axis'}, ...
-                    'Location', 'northeastoutside');
+                    'Location', 'southoutside', 'Orientation', 'horizontal');
             end
             title(ax, sprintf('Q50 half-max footprints with ellipse and Feret axes (n=%d)', nDrawn), 'Interpreter', 'none');
+            hold(ax, 'off');
+        end
+
+        function plotPeakPerimeterThresholdOverlay(app, ax)
+            app.showRawSurface(ax);
+            hold(ax, 'on');
+            zAbs = app.getMoundShapeMetric('whole_image_z_at_peak_perimeter_um');
+            zRel = app.getMoundShapeMetric('whole_image_z_rel_at_peak_perimeter_um');
+            peakPerim = app.getMoundShapeMetric('whole_image_peak_perimeter_um');
+            if ~isfield(app.MoundShapeGuiResults, 'm1') || ~isfield(app.MoundShapeGuiResults.m1, 'Z') || ...
+                    ~isfinite(zAbs)
+                text(ax, 0.5, 0.5, 'Peak-perimeter threshold unavailable', ...
+                    'HorizontalAlignment', 'center');
+                axis(ax, 'off');
+                hold(ax, 'off');
+                return;
+            end
+            Z = app.MoundShapeGuiResults.m1.Z;
+            thresholdMask = isfinite(Z) & Z >= zAbs;
+            app.overlayMask(ax, thresholdMask, [1.00 0.85 0.00], 0.34);
+            boundaryMask = bwperim(thresholdMask, 8);
+            app.overlayMask(ax, imdilate(boundaryMask, strel('disk', 1)), [0.95 0.10 0.10], 0.85);
+            hThreshold = plot(ax, NaN, NaN, 's', ...
+                'Color', [1.00 0.85 0.00], 'MarkerFaceColor', [1.00 0.85 0.00], ...
+                'MarkerSize', 7);
+            hBoundary = plot(ax, NaN, NaN, 's', ...
+                'Color', [0.95 0.10 0.10], 'MarkerFaceColor', [0.95 0.10 0.10], ...
+                'MarkerSize', 7);
+            legend(ax, [hThreshold hBoundary], {'Z >= peak-perimeter height', 'Threshold boundary'}, ...
+                'Location', 'southoutside', 'Orientation', 'horizontal');
+            title(ax, sprintf('Peak-perimeter threshold | %.3g um rel / %.3g um abs | perimeter %.3g um', ...
+                zRel, zAbs, peakPerim), 'Interpreter', 'none');
             hold(ax, 'off');
         end
 
@@ -1153,13 +1413,15 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.overlayMask(ax, borderMask, [1.00 1.00 0.00], 0.78);
             peaks = app.MoundShapeGuiResults.watershed_peak_rowcol_px;
             valid = logical(app.MoundShapeGuiResults.valid_flag_c(:)) & all(isfinite(peaks), 2);
-            hPeak = plot(ax, peaks(valid,2), peaks(valid,1), 'm+', 'MarkerSize', 5, 'LineWidth', 1.0);
+            hPeak = plot(ax, peaks(valid,2), peaks(valid,1), 'o', ...
+                'Color', [1.00 0.85 0.00], 'MarkerFaceColor', [1.00 0.85 0.00], ...
+                'MarkerSize', 4.5, 'LineWidth', 0.8);
             hBase = plot(ax, NaN, NaN, 's', 'Color', [0.00 1.00 1.00], ...
                 'MarkerFaceColor', [0.00 1.00 1.00], 'MarkerSize', 7);
             hBorder = plot(ax, NaN, NaN, 's', 'Color', [1.00 1.00 0.00], ...
                 'MarkerFaceColor', [1.00 1.00 0.00], 'MarkerSize', 7);
             legend(ax, [hBase hBorder hPeak], {'Method C base band', 'Watershed border', 'Watershed peak'}, ...
-                'Location', 'northeastoutside');
+                'Location', 'southoutside', 'Orientation', 'horizontal');
             title(ax, 'Method C base-band and watershed-border overlay', 'Interpreter', 'none');
             hold(ax, 'off');
         end
@@ -1169,14 +1431,14 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             hold(ax, 'on');
             c = app.MoundShapeGuiResults.centroid_px;
             ws = app.MoundShapeGuiResults.watershed_seed_centroids_px;
-            plot(ax, c(:,1), c(:,2), 'r.', 'MarkerSize', 8);
+            plot(ax, c(:,1), c(:,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             if ~isempty(ws)
                 plot(ax, ws(:,1), ws(:,2), 'co', 'MarkerSize', 5, 'LineWidth', 1.0);
             end
-            hCentroid = plot(ax, NaN, NaN, 'r.', 'MarkerSize', 8);
+            hCentroid = plot(ax, NaN, NaN, 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             hSeed = plot(ax, NaN, NaN, 'co', 'MarkerSize', 5, 'LineWidth', 1.0);
             legendHandles = [hCentroid hSeed];
-            legendLabels = {'Detected centroid', 'Watershed seed'};
+            legendLabels = {'Mound detection centroid', 'Watershed seed'};
             if isfield(app.MoundShapeGuiResults, 'added_edge_seed_centroids_px')
                 edgeSeeds = app.MoundShapeGuiResults.added_edge_seed_centroids_px;
                 if ~isempty(edgeSeeds)
@@ -1186,7 +1448,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     legendLabels = [legendLabels {'Added edge seed'}];
                 end
             end
-            legend(ax, legendHandles, legendLabels, 'Location', 'northeastoutside');
+            legend(ax, legendHandles, legendLabels, 'Location', 'southoutside', 'Orientation', 'horizontal');
             title(ax, 'Watershed seed overlay', 'Interpreter', 'none');
             hold(ax, 'off');
         end
@@ -1199,11 +1461,13 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.overlayMask(ax, circleGlobal, [0.10 0.90 0.95], 0.22);
             centroids = app.MoundShapeGuiResults.centroid_px;
             valid = logical(app.MoundShapeGuiResults.valid_flag_nn(:));
-            plot(ax, centroids(valid,1), centroids(valid,2), 'r.', 'MarkerSize', 8);
+            plot(ax, centroids(valid,1), centroids(valid,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             plot(ax, centroids(~valid,1), centroids(~valid,2), 'x', 'Color', [0.6 0.6 0.6], 'MarkerSize', 5);
             peaks = app.MoundShapeGuiResults.watershed_peak_rowcol_px;
             rpValid = all(isfinite(peaks), 2);
-            plot(ax, peaks(rpValid,2), peaks(rpValid,1), 'm+', 'MarkerSize', 5, 'LineWidth', 1.0);
+            plot(ax, peaks(rpValid,2), peaks(rpValid,1), 'o', ...
+                'Color', [1.00 0.85 0.00], 'MarkerFaceColor', [1.00 0.85 0.00], ...
+                'MarkerSize', 4.5, 'LineWidth', 0.8);
             valleyPx = app.MoundShapeGuiResults.method_b_valley_px;
             valleyValid = all(isfinite(valleyPx), 2);
             plot(ax, valleyPx(valleyValid,2), valleyPx(valleyValid,1), 'o', ...
@@ -1211,14 +1475,16 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 'MarkerSize', 4, 'LineWidth', 1.0);
             hRegion = plot(ax, NaN, NaN, 's', 'Color', [0.10 0.90 0.95], ...
                 'MarkerFaceColor', [0.10 0.90 0.95], 'MarkerSize', 7);
-            hCentroid = plot(ax, NaN, NaN, 'r.', 'MarkerSize', 8);
-            hRp = plot(ax, NaN, NaN, 'm+', 'MarkerSize', 5, 'LineWidth', 1.0);
+            hCentroid = plot(ax, NaN, NaN, 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
+            hRp = plot(ax, NaN, NaN, 'o', ...
+                'Color', [1.00 0.85 0.00], 'MarkerFaceColor', [1.00 0.85 0.00], ...
+                'MarkerSize', 4.5, 'LineWidth', 0.8);
             hValley = plot(ax, NaN, NaN, 'o', ...
                 'Color', [0.55 0.10 0.90], 'MarkerFaceColor', [0.55 0.10 0.90], ...
                 'MarkerSize', 4, 'LineWidth', 1.0);
             legend(ax, [hRegion hCentroid hRp hValley], ...
                 {'NN search region', 'Mound detection centroid', 'Rp locations', 'Rv valley locations'}, ...
-                'Location', 'northeastoutside');
+                'Location', 'southoutside', 'Orientation', 'horizontal');
             title(ax, 'Nearest-neighbor circle search regions on raw surface', 'Interpreter', 'none');
             hold(ax, 'off');
         end
@@ -1230,11 +1496,11 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             peaks = app.MoundShapeGuiResults.watershed_peak_rowcol_px;
             valid = logical(app.MoundShapeGuiResults.preferred_valid_flag(:)) & all(isfinite(peaks), 2);
             centroids = app.MoundShapeGuiResults.centroid_px;
-            hCentroid = plot(ax, centroids(valid,1), centroids(valid,2), 'k.', 'MarkerSize', 8);
+            hCentroid = plot(ax, centroids(valid,1), centroids(valid,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             hRegion = plot(ax, NaN, NaN, 's', 'Color', [0.10 0.55 1.00], ...
                 'MarkerFaceColor', [0.10 0.55 1.00], 'MarkerSize', 7);
-            legend(ax, [hRegion hCentroid], {'Accepted watershed region color', 'Accepted centroid'}, ...
-                'Location', 'northeastoutside');
+            legend(ax, [hRegion hCentroid], {'Accepted watershed region color', 'Mound detection centroid'}, ...
+                'Location', 'southoutside', 'Orientation', 'horizontal');
             title(ax, sprintf('Accepted watershed regions used for surface area and peak-cap volume (n=%d)', sum(valid)), ...
                 'Interpreter', 'none');
             hold(ax, 'off');
@@ -1277,11 +1543,11 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             boundaryMask = boundaryMask & L > 0;
             app.overlayMask(ax, imdilate(boundaryMask, strel('disk', 1)), [1.00 0.80 0.05], 0.65);
             c = app.MoundShapeGuiResults.centroid_px;
-            hCentroid = plot(ax, c(:,1), c(:,2), 'c.', 'MarkerSize', 7);
+            hCentroid = plot(ax, c(:,1), c(:,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             hBoundary = plot(ax, NaN, NaN, 's', 'Color', [1.00 0.80 0.05], ...
                 'MarkerFaceColor', [1.00 0.80 0.05], 'MarkerSize', 7);
-            legend(ax, [hBoundary hCentroid], {'Watershed boundary', 'Centroid'}, ...
-                'Location', 'northeastoutside');
+            legend(ax, [hBoundary hCentroid], {'Watershed boundary', 'Mound detection centroid'}, ...
+                'Location', 'southoutside', 'Orientation', 'horizontal');
             title(ax, 'Selected watershed boundaries on raw surface', 'Interpreter', 'none');
             hold(ax, 'off');
         end
@@ -1296,12 +1562,12 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             footprint = logical(app.MoundShapeGuiResults.watershed_valid_flag(:));
             validAll = preferred & methodB & methodC & footprint;
             rejected = ~validAll;
-            plot(ax, c(validAll,1), c(validAll,2), 'g.', 'MarkerSize', 9);
+            plot(ax, c(validAll,1), c(validAll,2), 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             plot(ax, c(rejected,1), c(rejected,2), 'rx', 'MarkerSize', 6, 'LineWidth', 1.0);
-            hValid = plot(ax, NaN, NaN, 'g.', 'MarkerSize', 9);
+            hValid = plot(ax, NaN, NaN, 'r+', 'MarkerSize', 6, 'LineWidth', 1.0);
             hRejected = plot(ax, NaN, NaN, 'rx', 'MarkerSize', 6, 'LineWidth', 1.0);
-            legend(ax, [hValid hRejected], {'Accepted preferred mound', 'Rejected mound'}, ...
-                'Location', 'northeastoutside');
+            legend(ax, [hValid hRejected], {'Accepted mound detection centroid', 'Rejected mound'}, ...
+                'Location', 'southoutside', 'Orientation', 'horizontal');
             title(ax, sprintf('Valid preferred mounds: %d / %d', sum(validAll), numel(validAll)), ...
                 'Interpreter', 'none');
             hold(ax, 'off');
@@ -1389,7 +1655,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         function label = metricAxisLabel(~, fieldName)
             labels = containers.Map( ...
                 {'nn_dist_um','preferred_Rp_per_mound','preferred_Rv_per_mound','preferred_Rz_per_mound', ...
-                 'height_open_um','height_typical_um','height_crowded_um','preferred_mound_base_position_um', ...
+                 'height_open_um','height_typical_um','height_crowded_um','method_c_watershed_border_z_um','preferred_mound_base_position_um', ...
                  'preferred_footprint_um2','preferred_equiv_diam_um','preferred_perimeter_um', ...
                  'preferred_major_axis_um','preferred_minor_axis_um','preferred_feret_max_um','preferred_feret_min_um', ...
                  'preferred_surface_area_um2','preferred_peak_cap_empty_volume_um3','preferred_surface_area_to_volume_inv_um', ...
@@ -1397,11 +1663,13 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                  'preferred_feret_aspect_ratio','preferred_ellipse_axis_ratio','preferred_orientation_deg', ...
                  'preferred_ellipse_orientation_deg','preferred_orientation_agreement_deg', ...
                  'preferred_aspect_ratio_geometric_mean_width','preferred_aspect_ratio_ellipse_major', ...
-                 'preferred_aspect_ratio_ellipse_minor','whole_image_slice_z_rel_um', ...
+                 'preferred_aspect_ratio_ellipse_minor','whole_image_slice_z_um','whole_image_slice_z_rel_um', ...
+                 'whole_image_z_at_peak_perimeter_um','whole_image_z_rel_at_peak_perimeter_um', ...
+                 'whole_image_peak_perimeter_um','whole_image_cross_section_area_at_peak_perimeter_um2', ...
                  'whole_image_cross_section_area_um2','whole_image_perimeter_um', ...
                  'whole_image_cumulative_surface_area_um2'}, ...
                 {'NN spacing (um)','Rp (um)','Rv (um)','Rz (um)', ...
-                 'Open-side height (um)','Typical height (um)','Crowded-side height (um)','Base position (um)', ...
+                 'Open-side height (um)','Median height (um)','Crowded-side height (um)','Watershed border Z height (um)','Base position (um)', ...
                  'Footprint area (um^2)','Equivalent diameter (um)','Perimeter (um)', ...
                  'Ellipse major axis (um)','Ellipse minor axis (um)','Feret max (um)','Feret min (um)', ...
                  'Surface area (um^2)','Peak-cap empty volume (um^3)','Surface area / volume (1/um)', ...
@@ -1411,7 +1679,12 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                  'Q50-to-peak height / geometric mean ellipse width', ...
                  'Q50-to-peak height / ellipse major axis', ...
                  'Q50-to-peak height / ellipse minor axis', ...
+                 'Absolute height (um)', ...
                  'Height relative to reference plane (um)', ...
+                 'Peak-perimeter absolute height (um)', ...
+                 'Peak-perimeter relative height (um)', ...
+                 'Maximum perimeter (um)', ...
+                 'Area at peak-perimeter height (um^2)', ...
                  'Cross-sectional area above height (um^2)', ...
                  'Cross-section perimeter at height (um)', ...
                  'Cumulative surface area above height (um^2)'});
@@ -1463,7 +1736,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.setMoundSurfaceSaveControlsEnabled(false);
             try
                 idx = app.ReviewTabGroup.SelectedTab.UserData;
-                app.saveMoundSurfaceTabData(app.MoundSurfaceTabData{idx});
+                app.saveMoundSurfaceTabData(app.MoundSurfaceTabData{idx}, true);
             catch ME
                 app.setMoundSurfaceSaveControlsEnabled(true);
                 rethrow(ME);
@@ -1475,8 +1748,9 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.setMoundSurfaceSaveControlsEnabled(false);
             try
                 for i = 1:numel(app.MoundSurfaceTabData)
-                    app.saveMoundSurfaceTabData(app.MoundSurfaceTabData{i});
+                    app.saveMoundSurfaceTabData(app.MoundSurfaceTabData{i}, false);
                 end
+                app.markAnalysisClean('moundSurface');
                 app.appendLog('Saved all mound/surface GUI tab exports.');
             catch ME
                 app.setMoundSurfaceSaveControlsEnabled(true);
@@ -1499,53 +1773,321 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             drawnow limitrate;
         end
 
-        function saveMoundSurfaceTabData(app, tabSpec)
-            outputDir = char(app.OutputEditField.Value);
-            exportDir = fullfile(outputDir, 'mound_surface_gui_exports');
-            if ~exist(exportDir, 'dir')
-                mkdir(exportDir);
+        function saveMoundSurfaceTabData(app, tabSpec, forceOverwrite)
+            if nargin < 3
+                forceOverwrite = true;
             end
+            outputDir = char(app.OutputEditField.Value);
             imageName = app.M1GuiResults.imageName;
-            baseName = sprintf('%s_gui_%s', imageName, tabSpec.groupId);
+            exportDir = app.getMoundAnalysisExportRoot(outputDir, imageName);
+            categoryDir = fullfile(exportDir, app.safeExportFolderName(tabSpec.title));
+            if ~exist(categoryDir, 'dir')
+                mkdir(categoryDir);
+            end
+
+            baseName = sprintf('%s_%s', imageName, tabSpec.groupId);
             csvPath = fullfile(exportDir, [baseName '_summary.csv']);
             writetable(tabSpec.summaryTable, csvPath);
+            rawCsvPath = fullfile(categoryDir, [baseName '_raw_data.csv']);
+            rawTable = app.moundSurfaceRawDataTable(tabSpec.groupId);
+            if ~isempty(rawTable)
+                writetable(rawTable, rawCsvPath);
+            end
 
             for i = 1:numel(tabSpec.plots)
                 if isgraphics(tabSpec.plots(i).Axes)
-                    pngPath = fullfile(exportDir, sprintf('%s_%s.png', baseName, tabSpec.plots(i).id));
-                    ax = tabSpec.plots(i).Axes;
-                    exportTextState = app.applyMoundSurfaceExportTextScaling(ax, tabSpec.plots(i).kind);
-                    try
-                        exportgraphics(ax, pngPath, 'Resolution', 150);
-                    catch ME
-                        app.restoreMoundSurfaceExportTextScaling(exportTextState);
-                        rethrow(ME);
+                    pngPath = fullfile(categoryDir, sprintf('%s_%s.png', baseName, tabSpec.plots(i).id));
+                    if ~forceOverwrite && app.wasMoundSurfacePlotExported(pngPath)
+                        continue;
                     end
-                    app.restoreMoundSurfaceExportTextScaling(exportTextState);
+                    app.exportMoundSurfacePlot(tabSpec.plots(i), pngPath);
+                    app.MoundSurfaceExportedPlotPaths{end+1} = char(pngPath);
                 end
             end
             app.appendLog(['Saved GUI tab export group: ' tabSpec.title]);
+        end
+
+        function rawTable = moundSurfaceRawDataTable(app, groupId)
+            fields = app.moundSurfaceRawDataFields(groupId);
+            rawTable = table();
+            for i = 1:numel(fields)
+                fieldName = fields{i};
+                value = app.getRawDataField(fieldName);
+                if isempty(value) || ~isnumeric(value)
+                    continue;
+                end
+                value = double(value);
+                if isvector(value)
+                    value = value(:);
+                else
+                    value = reshape(value, size(value, 1), []);
+                end
+                names = app.rawDataColumnNames(fieldName, size(value, 2));
+                for j = 1:size(value, 2)
+                    rawTable = app.addRawDataColumn(rawTable, names{j}, value(:, j));
+                end
+            end
+        end
+
+        function fields = moundSurfaceRawDataFields(~, groupId)
+            switch groupId
+                case 'moundSpacing'
+                    fields = {'centroids','trimmed_edges','nn_dist_px','nn_dist_um'};
+                case 'roughness'
+                    fields = {'centroid_px','valid_flag_nn','preferred_Rp_per_mound', ...
+                        'preferred_Rv_per_mound','preferred_Rz_per_mound', ...
+                        'watershed_peak_rowcol_px','method_b_valley_px'};
+                case 'directHeight'
+                    fields = {'centroid_px','valid_flag_c','height_open_um','height_typical_um', ...
+                        'height_crowded_um','method_c_watershed_border_z_um', ...
+                        'base_q10_z_um','base_q50_z_um','base_q90_z_um', ...
+                        'watershed_peak_z_um','watershed_peak_rowcol_px'};
+                case 'footprintShape'
+                    fields = {'centroid_px','watershed_valid_flag','preferred_footprint_um2', ...
+                        'preferred_equiv_diam_um','preferred_perimeter_um', ...
+                        'preferred_circularity','preferred_solidity','preferred_convexity', ...
+                        'preferred_extent'};
+                case 'axesOrientation'
+                    fields = {'centroid_px','preferred_major_axis_um','preferred_minor_axis_um', ...
+                        'preferred_feret_max_um','preferred_feret_min_um', ...
+                        'preferred_feret_aspect_ratio','preferred_ellipse_axis_ratio', ...
+                        'preferred_ellipse_orientation_deg','preferred_orientation_deg', ...
+                        'preferred_orientation_agreement_deg', ...
+                        'preferred_aspect_ratio_geometric_mean_width', ...
+                        'preferred_aspect_ratio_ellipse_major', ...
+                        'preferred_aspect_ratio_ellipse_minor'};
+                case 'surfaceAreaVolume'
+                    fields = {'centroid_px','preferred_valid_flag','preferred_surface_area_um2', ...
+                        'preferred_peak_cap_empty_volume_um3', ...
+                        'preferred_surface_area_to_volume_inv_um'};
+                case 'wholeImageSlices'
+                    fields = {'whole_image_slice_z_um','whole_image_slice_z_rel_um', ...
+                        'whole_image_cross_section_area_um2','whole_image_perimeter_um', ...
+                        'whole_image_cumulative_surface_area_um2', ...
+                        'whole_image_cumulative_surface_area_fraction', ...
+                        'whole_image_peak_perimeter_um', ...
+                        'whole_image_z_at_peak_perimeter_um', ...
+                        'whole_image_z_rel_at_peak_perimeter_um', ...
+                        'whole_image_cross_section_area_at_peak_perimeter_um2'};
+                otherwise
+                    fields = {'centroid_px','preferred_valid_flag','valid_flag_nn','valid_flag_c', ...
+                        'watershed_seed_centroids_px','added_edge_seed_centroids_px', ...
+                        'watershed_sigma_candidates_px','watershed_sigma_scores'};
+            end
+        end
+
+        function value = getRawDataField(app, fieldName)
+            if isfield(app.MoundShapeGuiResults, fieldName)
+                value = app.MoundShapeGuiResults.(fieldName);
+            elseif isfield(app.M1GuiResults, fieldName)
+                value = app.M1GuiResults.(fieldName);
+            else
+                value = [];
+            end
+        end
+
+        function names = rawDataColumnNames(~, fieldName, nCols)
+            switch fieldName
+                case {'centroids','centroid_px','watershed_seed_centroids_px','added_edge_seed_centroids_px'}
+                    baseNames = {sprintf('%s_x_px', fieldName), sprintf('%s_y_px', fieldName)};
+                case {'watershed_peak_rowcol_px','method_b_valley_px'}
+                    baseNames = {sprintf('%s_row_px', fieldName), sprintf('%s_col_px', fieldName)};
+                case 'trimmed_edges'
+                    baseNames = {'trimmed_edge_mound_index_1', 'trimmed_edge_mound_index_2'};
+                otherwise
+                    baseNames = {};
+            end
+            names = cell(1, nCols);
+            for i = 1:nCols
+                if i <= numel(baseNames)
+                    names{i} = baseNames{i};
+                elseif nCols == 1
+                    names{i} = fieldName;
+                else
+                    names{i} = sprintf('%s_col%d', fieldName, i);
+                end
+                names{i} = matlab.lang.makeValidName(names{i});
+            end
+        end
+
+        function outTable = addRawDataColumn(~, inTable, columnName, values)
+            values = values(:);
+            nExisting = height(inTable);
+            nNew = numel(values);
+            if nExisting == 0
+                outTable = table(values, 'VariableNames', {columnName});
+                return;
+            end
+            if nNew < nExisting
+                values(end+1:nExisting, 1) = NaN;
+                outTable = inTable;
+            elseif nNew > nExisting
+                outTable = [inTable; array2table(NaN(nNew - nExisting, width(inTable)), ...
+                    'VariableNames', inTable.Properties.VariableNames)];
+            else
+                outTable = inTable;
+            end
+            outTable.(columnName) = values;
+        end
+
+        function tf = wasMoundSurfacePlotExported(app, pngPath)
+            tf = exist(pngPath, 'file') == 2 && any(strcmp(app.MoundSurfaceExportedPlotPaths, char(pngPath)));
+        end
+
+        function exportMoundSurfacePlot(app, plotSpec, pngPath)
+            if app.isExportRenderedPlotKind(plotSpec.kind)
+                app.exportRenderedMoundSurfacePlot(plotSpec, pngPath);
+                return;
+            end
+
+            ax = plotSpec.Axes;
+            exportTextState = app.applyMoundSurfaceExportTextScaling(ax, plotSpec.kind);
+            try
+                exportgraphics(ax, pngPath, 'Resolution', 150);
+            catch ME
+                app.restoreMoundSurfaceExportTextScaling(exportTextState);
+                rethrow(ME);
+            end
+            app.restoreMoundSurfaceExportTextScaling(exportTextState);
+        end
+
+        function tf = isExportRenderedPlotKind(~, plotKind)
+            tf = any(strcmp(plotKind, {'histM1', 'histM3', 'lineM3', 'watershedScores'}));
+        end
+
+        function exportRenderedMoundSurfacePlot(app, plotSpec, pngPath)
+            fig = figure('Visible', 'off', 'Color', 'w', 'Position', app.exportFigurePosition(plotSpec.kind));
+            cleanupObj = onCleanup(@() close(fig));
+            ax = axes(fig);
+            app.applyDefaultExportFont(ax, plotSpec.kind);
+
+            switch plotSpec.kind
+                case 'histM1'
+                    v = app.M1GuiResults.(plotSpec.fields{1});
+                    app.plotMetricHistogram(ax, v, plotSpec.title, plotSpec.fields{1});
+                case 'histM3'
+                    v = app.getMoundShapeMetric(plotSpec.fields{1});
+                    app.plotMetricHistogram(ax, v, plotSpec.title, plotSpec.fields{1});
+                case 'lineM3'
+                    app.plotMoundSurfaceLineMetric(ax, plotSpec, 2.2);
+                case 'watershedScores'
+                    x = app.getMoundShapeMetric('watershed_sigma_candidates_px');
+                    y = app.getMoundShapeMetric('watershed_sigma_scores');
+                    plot(ax, x, y, '-o', 'LineWidth', 2.0, 'MarkerSize', 7);
+                    xlabel(ax, 'Watershed smoothing sigma (px)');
+                    ylabel(ax, 'Score');
+                    title(ax, 'Watershed sigma selection', 'Interpreter', 'none');
+                    grid(ax, 'on');
+            end
+
+            app.applyDefaultExportFont(ax, plotSpec.kind);
+            exportgraphics(fig, pngPath, 'Resolution', 150);
+        end
+
+        function position = exportFigurePosition(~, plotKind)
+            if strcmp(plotKind, 'histM1') || strcmp(plotKind, 'histM3')
+                position = [80 80 1250 850];
+            elseif strcmp(plotKind, 'lineM3') || strcmp(plotKind, 'watershedScores')
+                position = [80 80 1400 850];
+            else
+                position = [80 80 1300 850];
+            end
+        end
+
+        function applyDefaultExportFont(app, ax, plotKind)
+            fontName = app.defaultMatlabFontName();
+            if strcmp(plotKind, 'histM1') || strcmp(plotKind, 'histM3')
+                axesFontSize = 22;
+                titleFontSize = 28;
+                labelFontSize = 26;
+                legendFontSize = 20;
+            else
+                axesFontSize = 18;
+                titleFontSize = 22;
+                labelFontSize = 20;
+                legendFontSize = 16;
+            end
+
+            ax.FontName = fontName;
+            ax.FontSize = axesFontSize;
+            ax.Title.FontName = fontName;
+            ax.Title.FontSize = titleFontSize;
+            ax.XLabel.FontName = fontName;
+            ax.XLabel.FontSize = labelFontSize;
+            ax.YLabel.FontName = fontName;
+            ax.YLabel.FontSize = labelFontSize;
+            ax.ZLabel.FontName = fontName;
+            ax.ZLabel.FontSize = labelFontSize;
+
+            legends = findall(ancestor(ax, 'figure'), 'Type', 'Legend');
+            for i = 1:numel(legends)
+                legends(i).FontName = fontName;
+                legends(i).FontSize = legendFontSize;
+            end
+            colorbars = findall(ancestor(ax, 'figure'), 'Type', 'ColorBar');
+            for i = 1:numel(colorbars)
+                colorbars(i).FontName = fontName;
+                colorbars(i).FontSize = legendFontSize;
+                colorbars(i).Label.FontName = fontName;
+                colorbars(i).Label.FontSize = labelFontSize;
+            end
+        end
+
+        function fontName = defaultMatlabFontName(~)
+            fontName = get(groot, 'defaultAxesFontName');
+            if isempty(fontName)
+                fontName = get(groot, 'factoryAxesFontName');
+            end
+            if isempty(fontName)
+                fontName = 'Helvetica';
+            end
+        end
+
+        function folderName = safeExportFolderName(~, titleText)
+            folderName = regexprep(char(titleText), '[^\w.-]+', '_');
+            folderName = regexprep(folderName, '^_+|_+$', '');
+            if isempty(folderName)
+                folderName = 'Output_Group';
+            end
+        end
+
+        function exportDir = getMoundAnalysisExportRoot(~, outputDir, imageName)
+            exportDir = fullfile(outputDir, sprintf('%s_mound_analysis_exports', imageName));
+        end
+
+        function exportDir = getMoundDetectionExportDir(app, outputDir, imageName)
+            exportDir = fullfile(app.getMoundAnalysisExportRoot(outputDir, imageName), 'Mound_Detection');
+        end
+
+        function exportDir = getLegacyRoughnessExportDir(app, outputDir, imageName)
+            exportDir = fullfile(app.getMoundAnalysisExportRoot(outputDir, imageName), 'Legacy_Roughness');
         end
 
         function state = applyMoundSurfaceExportTextScaling(app, ax, plotKind)
             state = struct();
             state.Axes = ax;
             state.AxesFontSize = ax.FontSize;
+            state.AxesFontName = ax.FontName;
             state.TextHandles = [ax.Title, ax.XLabel, ax.YLabel, ax.ZLabel];
             state.TextFontSizes = arrayfun(@(h) h.FontSize, state.TextHandles);
+            state.TextFontNames = arrayfun(@(h) string(h.FontName), state.TextHandles);
             state.Legends = findall(app.UIFigure, 'Type', 'Legend');
             state.LegendFontSizes = arrayfun(@(h) h.FontSize, state.Legends);
+            state.LegendFontNames = arrayfun(@(h) string(h.FontName), state.Legends);
             state.Colorbars = findall(app.UIFigure, 'Type', 'ColorBar');
             state.ColorbarFontSizes = arrayfun(@(h) h.FontSize, state.Colorbars);
             state.ColorbarLabelFontSizes = arrayfun(@(h) h.Label.FontSize, state.Colorbars);
+            state.ColorbarFontNames = arrayfun(@(h) string(h.FontName), state.Colorbars);
+            state.ColorbarLabelFontNames = arrayfun(@(h) string(h.Label.FontName), state.Colorbars);
+            fontName = app.defaultMatlabFontName();
 
             hasHistogram = strcmp(plotKind, 'histM1') || strcmp(plotKind, 'histM3') || ...
                 ~isempty(findobj(ax, 'Type', 'Histogram'));
             if hasHistogram
-                axisMin = 18;
-                textMin = 21;
-                legendMin = 17;
-                scaleFactor = 1.85;
+                axisMin = 22;
+                textMin = 26;
+                legendMin = 20;
+                scaleFactor = 2.25;
             else
                 axisMin = 14;
                 textMin = 15;
@@ -1553,20 +2095,25 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 scaleFactor = 1.45;
             end
 
+            ax.FontName = fontName;
             ax.FontSize = max(axisMin, state.AxesFontSize * scaleFactor);
             for i = 1:numel(state.TextHandles)
                 if isgraphics(state.TextHandles(i))
+                    state.TextHandles(i).FontName = fontName;
                     state.TextHandles(i).FontSize = max(textMin, state.TextFontSizes(i) * scaleFactor);
                 end
             end
             for i = 1:numel(state.Legends)
                 if isgraphics(state.Legends(i))
+                    state.Legends(i).FontName = fontName;
                     state.Legends(i).FontSize = max(legendMin, state.LegendFontSizes(i) * scaleFactor);
                 end
             end
             for i = 1:numel(state.Colorbars)
                 if isgraphics(state.Colorbars(i))
+                    state.Colorbars(i).FontName = fontName;
                     state.Colorbars(i).FontSize = max(legendMin, state.ColorbarFontSizes(i) * scaleFactor);
+                    state.Colorbars(i).Label.FontName = fontName;
                     state.Colorbars(i).Label.FontSize = max(textMin, state.ColorbarLabelFontSizes(i) * scaleFactor);
                 end
             end
@@ -1574,21 +2121,26 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
 
         function restoreMoundSurfaceExportTextScaling(~, state)
             if isfield(state, 'Axes') && isgraphics(state.Axes)
+                state.Axes.FontName = state.AxesFontName;
                 state.Axes.FontSize = state.AxesFontSize;
             end
             for i = 1:numel(state.TextHandles)
                 if isgraphics(state.TextHandles(i))
+                    state.TextHandles(i).FontName = char(state.TextFontNames(i));
                     state.TextHandles(i).FontSize = state.TextFontSizes(i);
                 end
             end
             for i = 1:numel(state.Legends)
                 if isgraphics(state.Legends(i))
+                    state.Legends(i).FontName = char(state.LegendFontNames(i));
                     state.Legends(i).FontSize = state.LegendFontSizes(i);
                 end
             end
             for i = 1:numel(state.Colorbars)
                 if isgraphics(state.Colorbars(i))
+                    state.Colorbars(i).FontName = char(state.ColorbarFontNames(i));
                     state.Colorbars(i).FontSize = state.ColorbarFontSizes(i);
+                    state.Colorbars(i).Label.FontName = char(state.ColorbarLabelFontNames(i));
                     state.Colorbars(i).Label.FontSize = state.ColorbarLabelFontSizes(i);
                 end
             end
@@ -1606,9 +2158,18 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                     uialert(app.UIFigure, 'Choose an output folder first.', 'Missing Output');
                     return;
                 end
+                if ~app.confirmAnalysisSwitch('legacyRoughness')
+                    return;
+                end
+                app.CurrentAnalysisId = 'legacyRoughness';
 
                 if ~exist(outputDir, 'dir')
                     mkdir(outputDir);
+                end
+                [~, imageName, ~] = fileparts(inputPath);
+                legacyOutputDir = app.getLegacyRoughnessExportDir(outputDir, imageName);
+                if ~exist(legacyOutputDir, 'dir')
+                    mkdir(legacyOutputDir);
                 end
 
                 app.MoundDetectionButton.BackgroundColor = app.IdleButtonColor;
@@ -1618,7 +2179,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 app.showMoundSurfaceSettings(false);
                 app.showReviewPanel(true);
                 app.ReviewPanel.Title = 'Legacy Surface Roughness';
-                app.createLegacyLoadingAreaContent(inputPath, outputDir);
+                app.createLegacyLoadingAreaContent(inputPath, legacyOutputDir);
                 useCachedSurface = app.hasCachedLegacySurface(inputPath);
                 if useCachedSurface
                     app.appendLog('Using cached VK4 surface data for this file.');
@@ -1629,18 +2190,18 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 app.logStatus({
                     'Building embedded legacy roughness tool...'
                     ['Input: ' inputPath]
-                    ['Output: ' outputDir]
+                    ['Output: ' legacyOutputDir]
                     'Preparing ROI placement controls.'
                     });
                 drawnow;
 
                 delete(app.ReviewPanel.Children);
-                app.createLegacyRoughnessAreaContent(outputDir);
+                app.createLegacyRoughnessAreaContent(legacyOutputDir);
                 app.refreshLegacyDisplay();
-                app.setLegacyStatus({
-                    'Legacy roughness ROI tool ready.'
-                    'Choose an ROI mode, place ROIs on the surface, then click Done.'
-                    });
+            app.setLegacyStatus({
+                'Legacy roughness ROI tool ready.'
+                'Choose an ROI mode, place ROIs on the surface, then click Save.'
+                });
 
             catch ME
                 app.logStatus({'Legacy roughness GUI launch failed.'; ME.message});
@@ -1652,8 +2213,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.UIFigure = uifigure('Name', 'SOLF VK4 Analysis App');
             app.UIFigure.WindowState = 'maximized';
 
-            app.MainGrid = uigridlayout(app.UIFigure, [1 4]);
-            app.MainGrid.ColumnWidth = {280, 2, 0, '1x'};
+            app.MainGrid = uigridlayout(app.UIFigure, [1 3]);
+            app.MainGrid.ColumnWidth = {330, 2, '1x'};
             app.MainGrid.RowHeight = {'1x'};
             app.MainGrid.Padding = [10 10 10 10];
             app.MainGrid.ColumnSpacing = 10;
@@ -1669,8 +2230,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.LeftPanel.Layout.Row = 1;
             app.LeftPanel.Layout.Column = 1;
 
-            app.LeftGrid = uigridlayout(app.LeftPanel, [18 1]);
-            app.LeftGrid.RowHeight = {18, 28, 28, 18, 28, 28, 18, 28, 28, 30, 30, 30, 30, 30, '1x', 26, 26, 26};
+            app.LeftGrid = uigridlayout(app.LeftPanel, [15 1]);
+            app.LeftGrid.RowHeight = {18, 28, 28, 18, 28, 28, 18, 28, 28, 30, 30, 30, 30, 30, '1x'};
             app.LeftGrid.Padding = [8 8 8 8];
             app.LeftGrid.RowSpacing = 7;
 
@@ -1692,9 +2253,11 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.MoundDetectionButton = uibutton(app.LeftGrid, 'push', 'Text', '1. Mound Detection');
             app.MoundDetectionButton.ButtonPushedFcn = @(src, event) app.onMoundDetection(src, event);
             app.CavityAnalysisButton = uibutton(app.LeftGrid, 'push', 'Text', '2. Cavity Analysis');
+            app.CavityAnalysisButton.ButtonPushedFcn = @(src, event) app.onCavityAnalysis(src, event);
             app.MoundSurfaceButton = uibutton(app.LeftGrid, 'push', 'Text', '3. Mound/Surface Analysis');
             app.MoundSurfaceButton.ButtonPushedFcn = @(src, event) app.onMoundSurfaceAnalysis(src, event);
             app.SpatialAnalysisButton = uibutton(app.LeftGrid, 'push', 'Text', '4. Spatial Analysis');
+            app.SpatialAnalysisButton.ButtonPushedFcn = @(src, event) app.onSpatialAnalysis(src, event);
             app.LegacyRoughnessButton = uibutton(app.LeftGrid, 'push', 'Text', '5. Legacy Roughness Measurement');
             app.LegacyRoughnessButton.ButtonPushedFcn = @(src, event) app.onLaunchLegacyRoughness(src, event);
 
@@ -1704,9 +2267,9 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         end
 
         function createMoundSettingsColumn(app)
-            app.MoundSettingsPanel = uipanel(app.MainGrid, 'Title', 'Mound Detection');
-            app.MoundSettingsPanel.Layout.Row = 1;
-            app.MoundSettingsPanel.Layout.Column = 3;
+            app.MoundSettingsPanel = uipanel(app.LeftGrid, 'Title', 'Mound Detection');
+            app.MoundSettingsPanel.Layout.Row = 15;
+            app.MoundSettingsPanel.Layout.Column = 1;
             app.MoundSettingsPanel.Visible = 'off';
 
             app.MoundSettingsGrid = uigridlayout(app.MoundSettingsPanel, [10 1]);
@@ -1741,34 +2304,54 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         end
 
         function createMoundSurfaceSettingsColumn(app)
-            app.MoundSurfaceSettingsPanel = uipanel(app.MainGrid, 'Title', 'Mound/Surface Analysis');
-            app.MoundSurfaceSettingsPanel.Layout.Row = 1;
-            app.MoundSurfaceSettingsPanel.Layout.Column = 3;
+            app.MoundSurfaceSettingsPanel = uipanel(app.LeftGrid, 'Title', 'Mound/Surface Analysis');
+            app.MoundSurfaceSettingsPanel.Layout.Row = 15;
+            app.MoundSurfaceSettingsPanel.Layout.Column = 1;
             app.MoundSurfaceSettingsPanel.Visible = 'off';
 
-            app.MoundSurfaceSettingsGrid = uigridlayout(app.MoundSurfaceSettingsPanel, [13 1]);
-            app.MoundSurfaceSettingsGrid.RowHeight = {24, 26, 26, 26, 26, 26, 26, 26, 26, 24, 26, '1x', 42};
+            app.MoundSurfaceSettingsGrid = uigridlayout(app.MoundSurfaceSettingsPanel, [6 1]);
+            app.MoundSurfaceSettingsGrid.RowHeight = {24, 116, 24, 26, '1x', 42};
             app.MoundSurfaceSettingsGrid.Padding = [8 10 8 10];
             app.MoundSurfaceSettingsGrid.RowSpacing = 8;
 
             uilabel(app.MoundSurfaceSettingsGrid, 'Text', 'Output groups', 'FontWeight', 'bold');
-            app.MoundSpacingCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'Mound Spacing', 'Value', true);
-            app.RoughnessCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'Roughness', 'Value', true);
-            app.DirectHeightCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'Direct Height', 'Value', true);
-            app.FootprintShapeCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'Footprint Shape', 'Value', true);
-            app.AxesOrientationCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'Axes And Orientation', 'Value', true);
-            app.SurfaceAreaVolumeCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'Surface Area And Volume', 'Value', true);
-            app.WholeImageSlicesCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'Whole-Image Slices', 'Value', false);
-            app.QADiagnosticsCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, 'Text', 'QA Diagnostics', 'Value', true);
+
+            outputGroupGrid = uigridlayout(app.MoundSurfaceSettingsGrid, [4 2]);
+            outputGroupGrid.Layout.Row = 2;
+            outputGroupGrid.Layout.Column = 1;
+            outputGroupGrid.RowHeight = {24, 24, 24, 24};
+            outputGroupGrid.ColumnWidth = {'1x', '1x'};
+            outputGroupGrid.Padding = [0 0 0 0];
+            outputGroupGrid.RowSpacing = 5;
+            outputGroupGrid.ColumnSpacing = 8;
+
+            app.MoundSpacingCheckBox = uicheckbox(outputGroupGrid, 'Text', 'Mound Spacing', 'Value', true);
+            app.MoundSpacingCheckBox.Layout.Row = 1; app.MoundSpacingCheckBox.Layout.Column = 1;
+            app.RoughnessCheckBox = uicheckbox(outputGroupGrid, 'Text', 'Roughness', 'Value', true);
+            app.RoughnessCheckBox.Layout.Row = 1; app.RoughnessCheckBox.Layout.Column = 2;
+            app.DirectHeightCheckBox = uicheckbox(outputGroupGrid, 'Text', 'Direct Height', 'Value', true);
+            app.DirectHeightCheckBox.Layout.Row = 2; app.DirectHeightCheckBox.Layout.Column = 1;
+            app.FootprintShapeCheckBox = uicheckbox(outputGroupGrid, 'Text', 'Footprint Shape', 'Value', true);
+            app.FootprintShapeCheckBox.Layout.Row = 2; app.FootprintShapeCheckBox.Layout.Column = 2;
+            app.AxesOrientationCheckBox = uicheckbox(outputGroupGrid, 'Text', 'Axes/Orientation', 'Value', true);
+            app.AxesOrientationCheckBox.Layout.Row = 3; app.AxesOrientationCheckBox.Layout.Column = 1;
+            app.SurfaceAreaVolumeCheckBox = uicheckbox(outputGroupGrid, 'Text', 'SA And Volume', 'Value', true);
+            app.SurfaceAreaVolumeCheckBox.Layout.Row = 3; app.SurfaceAreaVolumeCheckBox.Layout.Column = 2;
+            app.WholeImageSlicesCheckBox = uicheckbox(outputGroupGrid, 'Text', 'Image Slices', 'Value', false);
+            app.WholeImageSlicesCheckBox.Layout.Row = 4; app.WholeImageSlicesCheckBox.Layout.Column = 1;
+            app.QADiagnosticsCheckBox = uicheckbox(outputGroupGrid, 'Text', 'QA Diagnostics', 'Value', true);
+            app.QADiagnosticsCheckBox.Layout.Row = 4; app.QADiagnosticsCheckBox.Layout.Column = 2;
 
             uilabel(app.MoundSurfaceSettingsGrid, 'Text', 'Advanced', 'FontWeight', 'bold');
             app.AdvancedMetricsCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, ...
                 'Text', 'Show advanced metric choices later', 'Value', false, 'Enable', 'off');
+            app.AdvancedMetricsCheckBox.Layout.Row = 4;
+            app.AdvancedMetricsCheckBox.Layout.Column = 1;
 
             app.RunMoundSurfaceButton = uibutton(app.MoundSurfaceSettingsGrid, 'push', ...
                 'Text', 'Run Analysis', 'FontWeight', 'bold', ...
                 'BackgroundColor', app.RunningButtonColor, 'FontColor', [1 1 1]);
-            app.RunMoundSurfaceButton.Layout.Row = 13;
+            app.RunMoundSurfaceButton.Layout.Row = 6;
             app.RunMoundSurfaceButton.Layout.Column = 1;
             app.RunMoundSurfaceButton.ButtonPushedFcn = @(src, event) app.onRunMoundSurfaceAnalysis(src, event);
         end
@@ -1776,7 +2359,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         function createReviewArea(app)
             app.ReviewPanel = uipanel(app.MainGrid, 'Title', 'Mound Detection Review');
             app.ReviewPanel.Layout.Row = 1;
-            app.ReviewPanel.Layout.Column = 4;
+            app.ReviewPanel.Layout.Column = 3;
             app.ReviewPanel.Visible = 'off';
             app.createMoundReviewAreaContent();
         end
@@ -1786,23 +2369,32 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.ReviewPanel.Title = 'Mound Detection Review';
             delete(app.ReviewPanel.Children);
 
-            app.ReviewGrid = uigridlayout(app.ReviewPanel, [3 1]);
-            app.ReviewGrid.RowHeight = {'1x', 42, 145};
+            app.ReviewGrid = uigridlayout(app.ReviewPanel, [1 2]);
+            app.ReviewGrid.ColumnWidth = {'1x', 380};
+            app.ReviewGrid.RowHeight = {'1x'};
             app.ReviewGrid.Padding = [8 8 8 8];
-            app.ReviewGrid.RowSpacing = 8;
+            app.ReviewGrid.ColumnSpacing = 10;
 
-            app.ReviewTabGroup = uitabgroup(app.ReviewGrid);
+            leftReviewGrid = uigridlayout(app.ReviewGrid, [2 1]);
+            leftReviewGrid.Layout.Row = 1;
+            leftReviewGrid.Layout.Column = 1;
+            leftReviewGrid.RowHeight = {'1x', 42};
+            leftReviewGrid.Padding = [0 0 0 0];
+            leftReviewGrid.RowSpacing = 8;
+
+            app.ReviewTabGroup = uitabgroup(leftReviewGrid);
             app.ReviewTabGroup.Layout.Row = 1;
             app.ReviewTabGroup.Layout.Column = 1;
+            app.ReviewTabGroup.SelectionChangedFcn = @(src, event) app.updateMoundDetectionSummaryFromSelectedTab();
 
-            app.TierButtonGrid = uigridlayout(app.ReviewGrid, [1 6]);
+            app.TierButtonGrid = uigridlayout(leftReviewGrid, [1 6]);
             app.TierButtonGrid.Layout.Row = 2;
             app.TierButtonGrid.Layout.Column = 1;
             app.TierButtonGrid.ColumnWidth = {85, 120, 130, 100, 110, '1x'};
             app.TierButtonGrid.RowHeight = {'1x'};
             app.TierButtonGrid.Padding = [0 0 0 0];
 
-            app.DoneButton = uibutton(app.TierButtonGrid, 'push', 'Text', 'Done');
+            app.DoneButton = uibutton(app.TierButtonGrid, 'push', 'Text', 'Save');
             app.DoneButton.ButtonPushedFcn = @(src, event) app.onDone(src, event);
             app.TooFewButton = uibutton(app.TierButtonGrid, 'push', 'Text', 'Too Few Mounds');
             app.TooFewButton.ButtonPushedFcn = @(src, event) app.onTooFew(src, event);
@@ -1813,7 +2405,25 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.ManualCountButton = uibutton(app.TierButtonGrid, 'push', 'Text', 'Manual Count');
             app.ManualCountButton.ButtonPushedFcn = @(src, event) app.onManualCount(src, event);
 
-            app.StatusTextArea = uitextarea(app.ReviewGrid, 'Editable', 'off');
+            rightReviewGrid = uigridlayout(app.ReviewGrid, [3 1]);
+            rightReviewGrid.Layout.Row = 1;
+            rightReviewGrid.Layout.Column = 2;
+            rightReviewGrid.RowHeight = {190, '1x', 145};
+            rightReviewGrid.Padding = [0 0 0 0];
+            rightReviewGrid.RowSpacing = 8;
+
+            summaryPanel = uipanel(rightReviewGrid, 'Title', 'Summary');
+            summaryPanel.Layout.Row = 1;
+            summaryGrid = uigridlayout(summaryPanel, [1 1]);
+            summaryGrid.Padding = [6 6 6 6];
+            app.ReviewSummaryTable = uitable(summaryGrid);
+            app.ReviewSummaryTable.Data = table();
+
+            app.ReviewInfoTextArea = uitextarea(rightReviewGrid, 'Editable', 'off');
+            app.ReviewInfoTextArea.Layout.Row = 2;
+            app.ReviewInfoTextArea.Value = {'Analysis information panel reserved for future details.'};
+
+            app.StatusTextArea = uitextarea(rightReviewGrid, 'Editable', 'off');
             app.StatusTextArea.Layout.Row = 3;
             app.StatusTextArea.Layout.Column = 1;
             app.setTierControlsEnabled(false);
@@ -1902,7 +2512,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.LegacyClearButton = uibutton(sideGrid, 'push', 'Text', 'Clear');
             app.LegacyClearButton.Layout.Row = 2; app.LegacyClearButton.Layout.Column = 2;
             app.LegacyClearButton.ButtonPushedFcn = @(src, event) app.onLegacyClear();
-            app.LegacyDoneButton = uibutton(sideGrid, 'push', 'Text', 'Done', 'FontWeight', 'bold');
+            app.LegacyDoneButton = uibutton(sideGrid, 'push', 'Text', 'Save', 'FontWeight', 'bold');
             app.LegacyDoneButton.Layout.Row = 2; app.LegacyDoneButton.Layout.Column = 1;
             app.LegacyDoneButton.ButtonPushedFcn = @(src, event) app.onLegacyDone();
 
@@ -1945,7 +2555,8 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.clearLegacyRois();
             [imgH, imgW] = size(app.LegacyZ);
             app.addLegacyRoi(struct('type', 'all_areas', 'x1', 1, 'x2', imgW, 'y1', 1, 'y2', imgH));
-            app.setLegacyStatus({'Stored ROI 1 as the full image.'; ['Output folder: ' char(app.OutputEditField.Value)]});
+            outputDir = app.getLegacyRoughnessExportDir(char(app.OutputEditField.Value), app.LegacyImageName);
+            app.setLegacyStatus({'Stored ROI 1 as the full image.'; ['Output folder: ' outputDir]});
         end
 
         function onLegacyAreaMode(app)
@@ -1994,11 +2605,15 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         end
 
         function onLegacyClear(app)
+            hadRois = ~isempty(app.LegacyRois);
             app.clearLegacyRois();
             app.refreshLegacyDisplay();
             app.LegacyClickStage = 0;
             app.LegacyAnchorPoint = [NaN NaN];
             app.deleteLegacyPreview();
+            if hadRois
+                app.markAnalysisDirty('legacyRoughness');
+            end
             app.setLegacyStatus({'All ROIs cleared.'; 'Ready for new placement.'});
         end
 
@@ -2012,6 +2627,10 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 mkdir(outputDir);
             end
             app.OutputEditField.Value = outputDir;
+            outputDir = app.getLegacyRoughnessExportDir(outputDir, app.LegacyImageName);
+            if ~exist(outputDir, 'dir')
+                mkdir(outputDir);
+            end
             results = app.buildLegacyResults(true, '', '');
             matPath = fullfile(outputDir, sprintf('%s_legacy_surface_roughness.mat', app.LegacyImageName));
             csvPath = fullfile(outputDir, sprintf('%s_legacy_surface_roughness.csv', app.LegacyImageName));
@@ -2026,6 +2645,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 'done_timestamp', char(datetime('now', 'TimeZone', 'local', 'Format', 'yyyy-MM-dd HH:mm:ss Z')));
             save(matPath, 'results');
             writecell(app.buildLegacyCsvExport(results), csvPath);
+            app.markAnalysisClean('legacyRoughness');
             app.setLegacyStatus({'Saved legacy roughness outputs.'; ['Output folder: ' outputDir]; matPath; csvPath});
         end
 
@@ -2106,6 +2726,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.LegacyRois(end + 1) = roi;
             app.drawLegacyRoiGraphic(roi);
             app.refreshLegacyDisplay();
+            app.markAnalysisDirty('legacyRoughness');
             app.setLegacyStatus({
                 sprintf('Stored ROI %d/%d (%s).', numel(app.LegacyRois), app.LegacyMaxRois, strrep(roi.type, '_', ' '))
                 'Metrics and summary updated.'

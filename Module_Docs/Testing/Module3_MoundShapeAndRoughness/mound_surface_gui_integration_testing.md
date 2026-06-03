@@ -14,7 +14,7 @@ The `Mound/Surface Analysis` button in `SOLFAnalysisApp`, using GUI-dedicated an
 The original command-line analysis functions remain unchanged while the GUI workflow is tested.
 
 ## Current Hypothesis Or Intended Behavior
-The GUI should let a user run Module 3-style mound/surface analysis without being overwhelmed by every available output at once. The user selects output families in a skinny settings column, runs the full GUI analysis once, and reviews selected output groups as tabs in the main app window.
+The GUI should let a user run Module 3-style mound/surface analysis without being overwhelmed by every available output at once. The user selects output families in a two-column active settings panel below the left-column analysis buttons, runs the full GUI analysis once, and reviews selected output groups as tabs in the main app window.
 
 ## Current Algorithm Or Workflow
 1. User selects a VK4 file and its matching `bestParams_<imageName>.mat`.
@@ -41,7 +41,7 @@ The GUI should let a user run Module 3-style mound/surface analysis without bein
 - `Roughness`
   - Method B nearest-neighbor search-region overlay plus `Rp`, `Rv`, `Rz` distributions
 - `Direct Height`
-  - Method C base-band overlay plus direct mound height, base position, and height-family distributions
+  - Method C base-band overlay plus direct mound height, base position, open/median/crowded height-family distributions, and the whole-image watershed-border Z-height distribution
 - `Footprint Shape`
   - raw-surface shape/footprint overlays plus footprint area, equivalent diameter, perimeter, circularity, solidity, convexity, and extent
 - `Axes And Orientation`
@@ -50,6 +50,8 @@ The GUI should let a user run Module 3-style mound/surface analysis without bein
   - accepted watershed-region overlay plus mound surface area, peak-cap empty volume, and surface-area-to-volume scale
 - `Whole-Image Slices`
   - whole-image area, perimeter, and cumulative surface area versus height
+  - the perimeter plot marks the maximum-perimeter height using both reference-plane-relative and absolute height values
+  - a raw-surface threshold overlay shows pixels at or above the maximum-perimeter height, with the threshold boundary highlighted
 - `QA Diagnostics`
   - watershed seed overlay, watershed boundary overlay, base-band overlay, validity overlay, watershed score, and run-level validity diagnostics
 
@@ -76,9 +78,24 @@ The GUI Module 3 path uses the shared `vkSurfaceAreaMetrics` helper so that the 
 
 ## Outputs And Figures Being Reviewed
 - In-app review tabs for selected output groups, with nested interactive plot tabs on the left and summary metrics on the right.
+- The right-side review column contains the selected tab summary, a reserved scrollable analysis-information box, and the command/status window at the bottom.
 - `Save Current Tab` GUI exports.
 - `Save All` GUI exports.
 - Normal GUI-core `MAT` and `XLSX` outputs.
+
+## Export Folder Structure Under Test
+- Module 3 GUI exports are written under `<imageName>_mound_analysis_exports/` inside the selected output folder.
+- Each output category writes plot PNGs into its own readable subfolder, for example `Mound_Spacing/`, `Roughness/`, and `Surface_Area_And_Volume/`.
+- Summary CSV files stay in the root `<imageName>_mound_analysis_exports/` folder so category summaries are easy to scan together.
+- Each output-category subfolder also writes a `*_raw_data.csv` file containing the numeric vectors used for that category's distributions and line plots, padded with `NaN` where columns have different lengths.
+- Re-saving the same tab or all tabs overwrites matching existing export files.
+- Histogram and line-style exports are re-rendered in temporary offscreen MATLAB figures with default MATLAB fonts and larger text intended for papers and presentations.
+- Image-overlay exports keep the in-app rendering but temporarily scale text for slide-style readability.
+- Image overlays use a shared marker convention during testing: mound-detection centroids are red `+` markers, and Rp locations are yellow filled dots.
+- Image-overlay legends are placed below the image with horizontal orientation so side legends do not shrink the image region on smaller monitors.
+- `Save All` skips plot PNGs already exported during the current app session; `Save Current Tab` forces a refresh of the active tab.
+- Switching to another analysis module after generating unsaved results prompts the user to save, continue without saving, or cancel the switch.
+- The GUI label `Median Height` uses the existing `height_typical_um` compatibility field, which is calculated from the Q50/median base height.
 
 ## Promotion Criteria
 - Reviewers can run Module 3 from VK4 plus the matching `bestParams_<imageName>.mat` without using separate command-window steps.

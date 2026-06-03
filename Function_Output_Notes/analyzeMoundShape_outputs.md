@@ -82,6 +82,7 @@ For the perimeter curve, image-frame border segments are excluded so the scan bo
 | `mound_base_valid_flag` | Validity flag for the preferred mound-base definition. |
 | `method_c_band_width_px` | Width of the Method C base band; currently `2` pixels. |
 | `method_c_watershed_border_mask` | Full-image mask of the watershed-border pixels used by Method C. |
+| `method_c_watershed_border_z_um` | Z-height values sampled from the full one-pixel-wide Method C watershed-border mask across the entire image. |
 | `method_c_base_band_label_img` | Labeled image of Method C base-band membership. |
 | `method_c_base_samples_um` | Stored raw Method C base-band samples by mound. |
 | `method_c_base_samples_percentile_um` | Stored percentile summaries of Method C base-band samples. |
@@ -109,14 +110,14 @@ For the perimeter curve, image-frame border segments are excluded so the scan bo
 
 ## Percentile/base-family direct height outputs
 
-These are the "open / typical / crowded" direct-height interpretations built from percentile-style local base positions.
+These are the "open / median / crowded" direct-height interpretations built from percentile-style local base positions. The historical field name `height_typical_um` is retained for compatibility, but the value is the Q50/median-base height.
 
 | Field | Meaning |
 | --- | --- |
-| `base_q10_z_um`, `base_q50_z_um`, `base_q90_z_um` | Absolute base heights for the open-side / typical / crowded-side interpretations. |
+| `base_q10_z_um`, `base_q50_z_um`, `base_q90_z_um` | Absolute base heights for the open-side / median / crowded-side interpretations. |
 | `base_q10_position_um`, `base_q50_position_um`, `base_q90_position_um` | Reference-plane-relative base positions for those same interpretations. |
 | `height_open_um` | Peak above the open-side base. |
-| `height_typical_um` | Peak above the typical base. |
+| `height_typical_um` | Peak above the median/Q50 base; retained under the historical `typical` field name for compatibility. |
 | `height_crowded_um` | Peak above the crowded-side base. |
 | `height_open_valid_flag`, `height_typical_valid_flag`, `height_crowded_valid_flag` | Validity flags for these direct-height families. |
 | `height_open_mean_um`, `height_open_std_um` | Surface-wide summary of `height_open_um`. |

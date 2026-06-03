@@ -24,7 +24,7 @@ The GUI:
 - computes `Rp`, `Rv`, and `Rz` inside each ROI relative to the whole-image reference plane
 - computes the surface-area to projected-area ratio, `SA_to_A_ratio`, from a triangulated height-map surface
 - shows live ROI-level and summary results
-- saves a `.mat` file and a `.csv` file when the user clicks `Done`
+- saves a `.mat` file and a `.csv` file when the user clicks `Save`
 
 ## Saved return struct
 
@@ -54,7 +54,7 @@ Top-level fields:
 | `mean_Rz_um`, `std_Rz_um` | Mean and standard deviation of ROI `Rz`. |
 | `mean_SA_to_A_ratio`, `std_SA_to_A_ratio` | Mean and standard deviation of ROI surface-area to projected-area ratio. |
 | `rois` | Stored raw ROI geometry structs used by the GUI. |
-| `saved` | Logical flag indicating whether `Done` was used. |
+| `saved` | Logical flag indicating whether `Save` was used. |
 | `saved_files` | Struct containing the saved `.mat` and `.csv` paths. |
 | `gui_settings` | Saved GUI configuration such as colormap, ROI color, ROI limit, default area size, and completion timestamp. |
 
