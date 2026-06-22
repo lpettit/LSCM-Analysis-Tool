@@ -34,7 +34,6 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
         SurfaceAreaVolumeCheckBox matlab.ui.control.CheckBox
         WholeImageSlicesCheckBox matlab.ui.control.CheckBox
         QADiagnosticsCheckBox matlab.ui.control.CheckBox
-        AdvancedMetricsCheckBox matlab.ui.control.CheckBox
         RunMoundSurfaceButton matlab.ui.control.Button
 
         ReviewPanel matlab.ui.container.Panel
@@ -320,7 +319,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
                 case 'spatialAnalysis'
                     name = 'Spatial Analysis';
                 case 'legacyRoughness'
-                    name = 'Legacy Roughness Measurement';
+                    name = 'Legacy Roughness';
                 otherwise
                     name = analysisId;
             end
@@ -350,19 +349,27 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
 
         function showMoundSettings(app, isVisible)
             if isVisible
+                app.LeftGrid.RowHeight = {28, 28, 28, 28, 28, 28, 30, 30, 30, 30, 30, 280, '1x'};
                 app.MoundSettingsPanel.Visible = 'on';
                 app.MoundSurfaceSettingsPanel.Visible = 'off';
             else
                 app.MoundSettingsPanel.Visible = 'off';
+                if strcmp(app.MoundSurfaceSettingsPanel.Visible, 'off')
+                    app.LeftGrid.RowHeight = {28, 28, 28, 28, 28, 28, 30, 30, 30, 30, 30, 0, '1x'};
+                end
             end
         end
 
         function showMoundSurfaceSettings(app, isVisible)
             if isVisible
+                app.LeftGrid.RowHeight = {28, 28, 28, 28, 28, 28, 30, 30, 30, 30, 30, 250, '1x'};
                 app.MoundSurfaceSettingsPanel.Visible = 'on';
                 app.MoundSettingsPanel.Visible = 'off';
             else
                 app.MoundSurfaceSettingsPanel.Visible = 'off';
+                if strcmp(app.MoundSettingsPanel.Visible, 'off')
+                    app.LeftGrid.RowHeight = {28, 28, 28, 28, 28, 28, 30, 30, 30, 30, 30, 0, '1x'};
+                end
             end
         end
 
@@ -2214,7 +2221,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.UIFigure.WindowState = 'maximized';
 
             app.MainGrid = uigridlayout(app.UIFigure, [1 3]);
-            app.MainGrid.ColumnWidth = {330, 2, '1x'};
+            app.MainGrid.ColumnWidth = {310, 2, '1x'};
             app.MainGrid.RowHeight = {'1x'};
             app.MainGrid.Padding = [10 10 10 10];
             app.MainGrid.ColumnSpacing = 10;
@@ -2230,25 +2237,38 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.LeftPanel.Layout.Row = 1;
             app.LeftPanel.Layout.Column = 1;
 
-            app.LeftGrid = uigridlayout(app.LeftPanel, [15 1]);
-            app.LeftGrid.RowHeight = {18, 28, 28, 18, 28, 28, 18, 28, 28, 30, 30, 30, 30, 30, '1x'};
+            app.LeftGrid = uigridlayout(app.LeftPanel, [13 1]);
+            app.LeftGrid.RowHeight = {28, 28, 28, 28, 28, 28, 30, 30, 30, 30, 30, 0, '1x'};
             app.LeftGrid.Padding = [8 8 8 8];
-            app.LeftGrid.RowSpacing = 7;
+            app.LeftGrid.RowSpacing = 6;
+            app.LeftGrid.Scrollable = 'on';
 
-            uilabel(app.LeftGrid, 'Text', 'Input .vk4 file', 'FontWeight', 'bold');
-            app.InputEditField = uieditfield(app.LeftGrid, 'text', 'Editable', 'off');
-            btnIn = uibutton(app.LeftGrid, 'push', 'Text', 'Browse VK4...');
+            inputHeaderGrid = uigridlayout(app.LeftGrid, [1 2]);
+            inputHeaderGrid.ColumnWidth = {'1x', 105};
+            inputHeaderGrid.Padding = [0 0 0 0];
+            inputHeaderGrid.ColumnSpacing = 6;
+            uilabel(inputHeaderGrid, 'Text', 'Input .vk4 file', 'FontWeight', 'bold');
+            btnIn = uibutton(inputHeaderGrid, 'push', 'Text', 'Browse VK4...');
             btnIn.ButtonPushedFcn = @(src, event) app.onBrowseInput(src, event);
+            app.InputEditField = uieditfield(app.LeftGrid, 'text', 'Editable', 'off');
 
-            uilabel(app.LeftGrid, 'Text', 'Output folder', 'FontWeight', 'bold');
-            app.OutputEditField = uieditfield(app.LeftGrid, 'text', 'Editable', 'off');
-            btnOut = uibutton(app.LeftGrid, 'push', 'Text', 'Browse Output...');
+            outputHeaderGrid = uigridlayout(app.LeftGrid, [1 2]);
+            outputHeaderGrid.ColumnWidth = {'1x', 105};
+            outputHeaderGrid.Padding = [0 0 0 0];
+            outputHeaderGrid.ColumnSpacing = 6;
+            uilabel(outputHeaderGrid, 'Text', 'Output folder', 'FontWeight', 'bold');
+            btnOut = uibutton(outputHeaderGrid, 'push', 'Text', 'Browse Output...');
             btnOut.ButtonPushedFcn = @(src, event) app.onBrowseOutput(src, event);
+            app.OutputEditField = uieditfield(app.LeftGrid, 'text', 'Editable', 'off');
 
-            uilabel(app.LeftGrid, 'Text', 'bestParams .mat', 'FontWeight', 'bold');
-            app.BestParamsEditField = uieditfield(app.LeftGrid, 'text', 'Editable', 'off');
-            btnBest = uibutton(app.LeftGrid, 'push', 'Text', 'Browse bestParams...');
+            bestParamsHeaderGrid = uigridlayout(app.LeftGrid, [1 2]);
+            bestParamsHeaderGrid.ColumnWidth = {'1x', 130};
+            bestParamsHeaderGrid.Padding = [0 0 0 0];
+            bestParamsHeaderGrid.ColumnSpacing = 6;
+            uilabel(bestParamsHeaderGrid, 'Text', 'bestParams .mat', 'FontWeight', 'bold');
+            btnBest = uibutton(bestParamsHeaderGrid, 'push', 'Text', 'Browse bestParams...');
             btnBest.ButtonPushedFcn = @(src, event) app.onBrowseBestParams(src, event);
+            app.BestParamsEditField = uieditfield(app.LeftGrid, 'text', 'Editable', 'off');
 
             app.MoundDetectionButton = uibutton(app.LeftGrid, 'push', 'Text', '1. Mound Detection');
             app.MoundDetectionButton.ButtonPushedFcn = @(src, event) app.onMoundDetection(src, event);
@@ -2258,7 +2278,7 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.MoundSurfaceButton.ButtonPushedFcn = @(src, event) app.onMoundSurfaceAnalysis(src, event);
             app.SpatialAnalysisButton = uibutton(app.LeftGrid, 'push', 'Text', '4. Spatial Analysis');
             app.SpatialAnalysisButton.ButtonPushedFcn = @(src, event) app.onSpatialAnalysis(src, event);
-            app.LegacyRoughnessButton = uibutton(app.LeftGrid, 'push', 'Text', '5. Legacy Roughness Measurement');
+            app.LegacyRoughnessButton = uibutton(app.LeftGrid, 'push', 'Text', '5. Legacy Roughness');
             app.LegacyRoughnessButton.ButtonPushedFcn = @(src, event) app.onLaunchLegacyRoughness(src, event);
 
             app.DividerPanel = uipanel(app.MainGrid, 'BorderType', 'none', 'BackgroundColor', [0.55 0.55 0.55]);
@@ -2268,49 +2288,52 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
 
         function createMoundSettingsColumn(app)
             app.MoundSettingsPanel = uipanel(app.LeftGrid, 'Title', 'Mound Detection');
-            app.MoundSettingsPanel.Layout.Row = 15;
+            app.MoundSettingsPanel.Layout.Row = 12;
             app.MoundSettingsPanel.Layout.Column = 1;
             app.MoundSettingsPanel.Visible = 'off';
 
-            app.MoundSettingsGrid = uigridlayout(app.MoundSettingsPanel, [10 1]);
-            app.MoundSettingsGrid.RowHeight = {30, 26, 26, 26, 26, 26, '1x', 30, 30, 42};
+            app.MoundSettingsGrid = uigridlayout(app.MoundSettingsPanel, [7 1]);
+            app.MoundSettingsGrid.RowHeight = {30, 28, 28, 24, 28, 42, '1x'};
             app.MoundSettingsGrid.Padding = [8 10 8 10];
-            app.MoundSettingsGrid.RowSpacing = 9;
+            app.MoundSettingsGrid.RowSpacing = 7;
 
             app.FillDeepPitsCheckBox = uicheckbox(app.MoundSettingsGrid, ...
                 'Text', 'Use reflection correction', 'Value', false);
 
-            uilabel(app.MoundSettingsGrid, 'Text', 'Fill threshold', 'FontWeight', 'bold');
+            fillHeaderGrid = uigridlayout(app.MoundSettingsGrid, [1 2]);
+            fillHeaderGrid.ColumnWidth = {'1x', 120};
+            fillHeaderGrid.Padding = [0 0 0 0];
+            fillHeaderGrid.ColumnSpacing = 6;
+            uilabel(fillHeaderGrid, 'Text', 'Fill threshold', 'FontWeight', 'bold');
+            app.PickFillThresholdButton = uibutton(fillHeaderGrid, 'push', ...
+                'Text', 'Pick Fill...');
+            app.PickFillThresholdButton.ButtonPushedFcn = @(src, event) app.onPickFillThreshold(src, event);
             app.FillThresholdField = uieditfield(app.MoundSettingsGrid, 'numeric', ...
                 'Value', 0.50, 'Limits', [0 1], ...
                 'LowerLimitInclusive', false, 'UpperLimitInclusive', false);
             app.FillThresholdField.Tooltip = 'fillThreshold used when reflection correction is enabled';
-
-            app.PickFillThresholdButton = uibutton(app.MoundSettingsGrid, 'push', ...
-                'Text', 'Pick Fill Threshold...');
-            app.PickFillThresholdButton.ButtonPushedFcn = @(src, event) app.onPickFillThreshold(src, event);
 
             uilabel(app.MoundSettingsGrid, 'Text', 'Max evals', 'FontWeight', 'bold');
             app.MaxEvalsField = uieditfield(app.MoundSettingsGrid, 'numeric', ...
                 'Value', 60, 'Limits', [1 Inf], 'RoundFractionalValues', true);
             app.MaxEvalsField.Tooltip = 'Max Bayesian optimization evaluations for initial mound detection';
 
-            uilabel(app.MoundSettingsGrid, 'Text', '');
-            uilabel(app.MoundSettingsGrid, 'Text', '');
-
             app.RunMoundDetectionButton = uibutton(app.MoundSettingsGrid, 'push', ...
-                'Text', 'Run Mound Detection', 'FontWeight', 'bold');
+                'Text', 'Run Mound Detection', 'FontWeight', 'bold', ...
+                'BackgroundColor', app.RunningButtonColor, 'FontColor', [1 1 1]);
+            app.RunMoundDetectionButton.Layout.Row = 6;
+            app.RunMoundDetectionButton.Layout.Column = 1;
             app.RunMoundDetectionButton.ButtonPushedFcn = @(src, event) app.onRunMoundDetection(src, event);
         end
 
         function createMoundSurfaceSettingsColumn(app)
             app.MoundSurfaceSettingsPanel = uipanel(app.LeftGrid, 'Title', 'Mound/Surface Analysis');
-            app.MoundSurfaceSettingsPanel.Layout.Row = 15;
+            app.MoundSurfaceSettingsPanel.Layout.Row = 12;
             app.MoundSurfaceSettingsPanel.Layout.Column = 1;
             app.MoundSurfaceSettingsPanel.Visible = 'off';
 
-            app.MoundSurfaceSettingsGrid = uigridlayout(app.MoundSurfaceSettingsPanel, [6 1]);
-            app.MoundSurfaceSettingsGrid.RowHeight = {24, 116, 24, 26, '1x', 42};
+            app.MoundSurfaceSettingsGrid = uigridlayout(app.MoundSurfaceSettingsPanel, [4 1]);
+            app.MoundSurfaceSettingsGrid.RowHeight = {24, 116, 42, '1x'};
             app.MoundSurfaceSettingsGrid.Padding = [8 10 8 10];
             app.MoundSurfaceSettingsGrid.RowSpacing = 8;
 
@@ -2342,16 +2365,10 @@ classdef SOLFAnalysisApp < matlab.apps.AppBase
             app.QADiagnosticsCheckBox = uicheckbox(outputGroupGrid, 'Text', 'QA Diagnostics', 'Value', true);
             app.QADiagnosticsCheckBox.Layout.Row = 4; app.QADiagnosticsCheckBox.Layout.Column = 2;
 
-            uilabel(app.MoundSurfaceSettingsGrid, 'Text', 'Advanced', 'FontWeight', 'bold');
-            app.AdvancedMetricsCheckBox = uicheckbox(app.MoundSurfaceSettingsGrid, ...
-                'Text', 'Show advanced metric choices later', 'Value', false, 'Enable', 'off');
-            app.AdvancedMetricsCheckBox.Layout.Row = 4;
-            app.AdvancedMetricsCheckBox.Layout.Column = 1;
-
             app.RunMoundSurfaceButton = uibutton(app.MoundSurfaceSettingsGrid, 'push', ...
                 'Text', 'Run Analysis', 'FontWeight', 'bold', ...
                 'BackgroundColor', app.RunningButtonColor, 'FontColor', [1 1 1]);
-            app.RunMoundSurfaceButton.Layout.Row = 6;
+            app.RunMoundSurfaceButton.Layout.Row = 3;
             app.RunMoundSurfaceButton.Layout.Column = 1;
             app.RunMoundSurfaceButton.ButtonPushedFcn = @(src, event) app.onRunMoundSurfaceAnalysis(src, event);
         end

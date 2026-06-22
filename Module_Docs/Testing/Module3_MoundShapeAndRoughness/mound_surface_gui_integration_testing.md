@@ -14,7 +14,7 @@ The `Mound/Surface Analysis` button in `SOLFAnalysisApp`, using GUI-dedicated an
 The original command-line analysis functions remain unchanged while the GUI workflow is tested.
 
 ## Current Hypothesis Or Intended Behavior
-The GUI should let a user run Module 3-style mound/surface analysis without being overwhelmed by every available output at once. The user selects output families in a two-column active settings panel below the left-column analysis buttons, runs the full GUI analysis once, and reviews selected output groups as tabs in the main app window.
+The GUI should let a user run Module 3-style mound/surface analysis without being overwhelmed by every available output at once. The user selects output families in a compact two-column active settings panel below the left-column analysis buttons, runs the full GUI analysis once, and reviews selected output groups as tabs in the main app window.
 
 ## Current Algorithm Or Workflow
 1. User selects a VK4 file and its matching `bestParams_<imageName>.mat`.
@@ -70,7 +70,7 @@ The GUI Module 3 path uses the shared `vkSurfaceAreaMetrics` helper so that the 
 
 ## Temporary Assumptions And Open Decisions
 - Full per-checkbox computation skipping inside `analyzeMoundShapeGuiCore` remains under development; this first pass isolates Mound Spacing and prevents repeated heavy downstream recomputation.
-- Group-level checkboxes are the main workflow. Advanced per-metric controls are reserved for a later pass.
+- Group-level checkboxes are the main workflow. Advanced per-metric controls are reserved for a later pass and are not shown in the current compact settings panel.
 - `Mound Spacing` is shown above `Roughness` because it is upstream context for interpreting all mound/surface outputs.
 - Old `bestParams.mat` files with generic or redundant variables do not unlock the Module 3 GUI workflow.
 - The GUI-core analysis functions skip automatic standalone PNG figure generation by default; figures are rendered in the app and exported only through GUI save buttons.

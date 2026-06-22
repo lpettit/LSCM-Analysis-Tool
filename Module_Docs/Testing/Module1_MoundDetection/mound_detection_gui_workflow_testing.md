@@ -17,12 +17,15 @@ The first testing build keeps file browsing and the existing `pickFillThreshold`
   - optional `bestParams_<imageName>.mat`
   - module-selection buttons
 - Active module settings are shown below the module-selection buttons in the same left column, instead of opening a separate settings column.
+- File-selection controls use compact header rows: the browse button sits to the right of the file/folder label, and the selected path is shown below.
+- The left column is scrollable, and the active settings panel uses a fixed-height row directly below the `Legacy Roughness` button so controls do not collapse when the window height is reduced.
 - The output folder defaults to the folder containing the selected VK4 file unless the user has manually chosen an output folder.
 - Module buttons remain disabled until inputs support them:
-  - VK4 only enables `Mound Detection` and `Legacy Roughness Measurement`
+  - VK4 only enables `Mound Detection` and `Legacy Roughness`
   - VK4 plus valid `bestParams_<imageName>.mat` enables downstream implemented analysis buttons
   - `Cavity Analysis` remains disabled during current testing
 - Clicking `Mound Detection` opens the mound-detection settings panel below the analysis buttons for reflection correction and fill-threshold selection.
+  - The fill-threshold picker uses the same compact header-row pattern, with the numeric threshold field below it.
 - Clicking `Run Mound Detection` starts a GUI-specific stable refinement core:
   - Tier 1 automatic tuning runs synchronously
   - each review result is added as a new tab

@@ -1,6 +1,6 @@
 # legacySurfaceRoughnessGUI outputs
 
-`legacySurfaceRoughnessGUI` is a standalone legacy-style roughness measurement tool. `SOLFAnalysisApp` also embeds an equivalent ROI workflow in its main review area when the user clicks `Legacy Roughness Measurement`.
+`legacySurfaceRoughnessGUI` is a standalone legacy-style roughness measurement tool. `SOLFAnalysisApp` also embeds an equivalent ROI workflow in its main review area when the user clicks `Legacy Roughness`.
 
 It can be launched either from:
 
