@@ -16,7 +16,7 @@ A legacy-style surface roughness ROI workflow intended to mimic the manual VK-st
 - verify the current surface-analysis pipeline against a legacy manual workflow
 - compare newer Module 3 roughness interpretations against manually placed legacy ROIs
 
-The standalone function `legacySurfaceRoughnessGUI.m` remains available, but the current integration under test embeds the same ROI workflow inside `SOLFAnalysisApp` when the user clicks `Legacy Roughness Measurement`.
+The standalone function `legacySurfaceRoughnessGUI.m` remains available, but the current integration under test embeds the same ROI workflow inside `SOLFAnalysisApp` when the user clicks `Legacy Roughness`.
 
 ## Current Hypothesis Or Intended Behavior
 The tool should provide a direct manual comparison path that is operationally familiar and scientifically tied to the current Module 3 reference framing.
@@ -41,7 +41,7 @@ Current intended behavior:
 
 ## Current Algorithm Or Workflow
 1. launch the workflow either from:
-   - `SOLFAnalysisApp` by selecting a `.vk4` file and clicking `Legacy Roughness Measurement`
+   - `SOLFAnalysisApp` by selecting a `.vk4` file and clicking `Legacy Roughness`
    - `legacySurfaceRoughnessGUI(inputSource, outputDir)` for the standalone compatibility path
 2. resolve the surface input in one of two ways:
    - preferred app path: use the `.vk4` file selected in the app and load the calibrated height map directly with `readVK4`
